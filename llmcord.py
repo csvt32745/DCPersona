@@ -4,7 +4,8 @@ from dataclasses import dataclass, field
 from datetime import datetime as dt
 import logging
 from typing import Literal, Optional
-
+from pathlib import Path
+import random
 import discord
 import httpx
 from openai import AsyncOpenAI
@@ -28,9 +29,18 @@ MAX_MESSAGE_NODES = 100
 
 
 def get_config(filename="config.yaml"):
-    with open(filename, "r") as file:
+    with open(filename, "r", encoding="utf-8") as file:
         return yaml.safe_load(file)
 
+def get_prompt(filename):
+    with open(filename, "r", encoding="utf-8") as file:
+        prompt = file.read()
+    return prompt
+
+def random_system_prompt(root="persona"):
+    filename = random.choice(list(Path(root).glob('*.txt')))
+    logging.info(f"Random Select {filename.stem} persona")
+    return get_prompt(filename)
 
 cfg = get_config()
 
@@ -47,6 +57,26 @@ httpx_client = httpx.AsyncClient()
 msg_nodes = {}
 last_task_time = 0
 
+
+google_search_tool = [
+    {
+        "type": "function",
+        "function": {
+            "name": "perform_Google Search",
+            "description": "當需要查詢最新資訊、事件、人物或不確定的事實時，執行 Google 搜尋",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {
+                        "type": "string",
+                        "description": "要執行的 Google 搜尋查詢字詞",
+                    },
+                },
+                "required": ["query"],
+            },
+        }
+    }
+]
 
 @dataclass
 class MsgNode:
@@ -65,11 +95,10 @@ class MsgNode:
 
 
 @discord_client.event
-async def on_message(new_msg):
+async def on_message(new_msg: discord.Message):
     global msg_nodes, last_task_time
 
     is_dm = new_msg.channel.type == discord.ChannelType.private
-
     if (not is_dm and discord_client.user not in new_msg.mentions) or new_msg.author.bot:
         return
 
@@ -80,6 +109,10 @@ async def on_message(new_msg):
 
     allow_dms = cfg["allow_dms"]
     permissions = cfg["permissions"]
+    is_maintainance = cfg["is_maintainance"]
+    if is_maintainance:
+        await new_msg.reply(content=cfg['maintainance_resp'], suppress_embeds=True)
+        return
 
     (allowed_user_ids, blocked_user_ids), (allowed_role_ids, blocked_role_ids), (allowed_channel_ids, blocked_channel_ids) = (
         (perm["allowed_ids"], perm["blocked_ids"]) for perm in (permissions["users"], permissions["roles"], permissions["channels"])
@@ -94,8 +127,10 @@ async def on_message(new_msg):
     is_bad_channel = not is_good_channel or any(id in blocked_channel_ids for id in channel_ids)
 
     if is_bad_user or is_bad_channel:
+        if is_bad_channel:
+            await new_msg.reply(content=cfg['reject_resp'], suppress_embeds=True)
         return
-
+    
     provider_slash_model = cfg["model"]
     provider, model = provider_slash_model.split("/", 1)
     base_url = cfg["providers"][provider]["base_url"]
@@ -111,14 +146,23 @@ async def on_message(new_msg):
 
     use_plain_responses = cfg["use_plain_responses"]
     max_message_length = 2000 if use_plain_responses else (4096 - len(STREAMING_INDICATOR))
-
+    is_casual_chat = any([text in new_msg.content for text in ["你怎麼想", "你認為呢", "你覺得呢", "如何"]])
+    system_prompt = random_system_prompt() if cfg["is_random_system_prompt"] else get_prompt(cfg['system_prompt_file'])
     # Build message chain and set user warnings
     messages = []
     user_warnings = set()
     curr_msg = new_msg
 
+    # prefetch messages
+    logging.info(f"Message received (user ID: {new_msg.author.id}, attachments: {len(new_msg.attachments)}, conversation length: {len(messages)}):\n{new_msg.content}")
+    history_msgs = []
+    if is_casual_chat:
+        history_msgs += [m async for m in curr_msg.channel.history(before=curr_msg, limit=max_messages)][::-1]
+    is_history_msg = False
+    remainig_imgs_count = max_images
+
     while curr_msg != None and len(messages) < max_messages:
-        curr_node = msg_nodes.setdefault(curr_msg.id, MsgNode())
+        curr_node: MsgNode = msg_nodes.setdefault(curr_msg.id, MsgNode())
 
         async with curr_node.lock:
             if curr_node.text == None:
@@ -147,57 +191,67 @@ async def on_message(new_msg):
                 curr_node.has_bad_attachments = len(curr_msg.attachments) > len(good_attachments)
 
                 try:
-                    if (
-                        curr_msg.reference == None
-                        and discord_client.user.mention not in curr_msg.content
-                        and (prev_msg_in_channel := ([m async for m in curr_msg.channel.history(before=curr_msg, limit=1)] or [None])[0])
-                        and prev_msg_in_channel.type in (discord.MessageType.default, discord.MessageType.reply)
-                        and prev_msg_in_channel.author == (discord_client.user if curr_msg.channel.type == discord.ChannelType.private else curr_msg.author)
-                    ):
-                        curr_node.parent_msg = prev_msg_in_channel
-                    else:
-                        is_public_thread = curr_msg.channel.type == discord.ChannelType.public_thread
-                        parent_is_thread_start = is_public_thread and curr_msg.reference == None and curr_msg.channel.parent.type == discord.ChannelType.text
+                    # if (
+                    #     (curr_msg.reference == None or is_casual_chat)
+                    #     and (discord_client.user.mention not in curr_msg.content or is_casual_chat)
+                    #     and (prev_msg_in_channel := ([m async for m in curr_msg.channel.history(before=curr_msg, limit=1)] or [None])[0])
+                    #     and prev_msg_in_channel.type in (discord.MessageType.default, discord.MessageType.reply)
+                    #     and (is_casual_chat or (prev_msg_in_channel.author == (discord_client.user if curr_msg.channel.type == discord.ChannelType.private else curr_msg.author)))
+                    # ):
+                    #     print("!!", prev_msg_in_channel)
+                    #     curr_node.parent_msg = prev_msg_in_channel
+                    # else:
+                        # is_public_thread = curr_msg.channel.type == discord.ChannelType.public_thread
+                        # parent_is_thread_start = is_public_thread and curr_msg.reference == None and curr_msg.channel.parent.type == discord.ChannelType.text
 
-                        if parent_msg_id := curr_msg.channel.id if parent_is_thread_start else getattr(curr_msg.reference, "message_id", None):
-                            if parent_is_thread_start:
-                                curr_node.parent_msg = curr_msg.channel.starter_message or await curr_msg.channel.parent.fetch_message(parent_msg_id)
-                            else:
-                                curr_node.parent_msg = curr_msg.reference.cached_message or await curr_msg.channel.fetch_message(parent_msg_id)
+                    if not is_history_msg and (parent_msg_id := getattr(curr_msg.reference, "message_id", None)):
+                        # if parent_is_thread_start:
+                        #     curr_node.parent_msg = curr_msg.channel.starter_message or await curr_msg.channel.parent.fetch_message(parent_msg_id)
+                        # else:
+                        curr_node.parent_msg = curr_msg.reference.cached_message or await curr_msg.channel.fetch_message(parent_msg_id)
 
                 except (discord.NotFound, discord.HTTPException):
                     logging.exception("Error fetching next message in the chain")
                     curr_node.fetch_parent_failed = True
 
-            if curr_node.images[:max_images]:
-                content = ([dict(type="text", text=curr_node.text[:max_text])] if curr_node.text[:max_text] else []) + curr_node.images[:max_images]
-            else:
-                content = curr_node.text[:max_text]
+            
+            content = ((f'<@{curr_node.user_id}>: ' if curr_node.user_id else "" ) + curr_node.text)[:max_text]
+            if imgs := curr_node.images[:remainig_imgs_count]:
+                remainig_imgs_count -= len(imgs)
+                content = ([dict(type="text", text=content)] if content else []) + imgs
 
             if content != "":
                 message = dict(content=content, role=curr_node.role)
                 if accept_usernames and curr_node.user_id != None:
                     message["name"] = str(curr_node.user_id)
-
                 messages.append(message)
 
+
+            curr_msg = curr_node.parent_msg
+            if curr_msg is None and len(history_msgs) > 0:
+                curr_msg = history_msgs.pop(-1)
+                is_history_msg = True
+                
             if len(curr_node.text) > max_text:
                 user_warnings.add(f"⚠️ Max {max_text:,} characters per message")
             if len(curr_node.images) > max_images:
                 user_warnings.add(f"⚠️ Max {max_images} image{'' if max_images == 1 else 's'} per message" if max_images > 0 else "⚠️ Can't see images")
             if curr_node.has_bad_attachments:
                 user_warnings.add("⚠️ Unsupported attachments")
-            if curr_node.fetch_parent_failed or (curr_node.parent_msg != None and len(messages) == max_messages):
+            if curr_node.fetch_parent_failed or (curr_msg != None and len(messages) == max_messages):
                 user_warnings.add(f"⚠️ Only using last {len(messages)} message{'' if len(messages) == 1 else 's'}")
-
-            curr_msg = curr_node.parent_msg
-
-    logging.info(f"Message received (user ID: {new_msg.author.id}, attachments: {len(new_msg.attachments)}, conversation length: {len(messages)}):\n{new_msg.content}")
-
-    if system_prompt := cfg["system_prompt"]:
-        system_prompt_extras = [f"Today's date: {dt.now().strftime('%B %d %Y')}."]
+                
+    print([(m.get('name', None), m['content'] if isinstance(m['content'], str) else m['content'][0]['text']) for m in messages])
+    print(len(messages), max_images - remainig_imgs_count, discord_client.user.id)
+    
+    if system_prompt:
+        detailed_time = dt.now().strftime("%Y-%m-%d %A %H:%M")
+        system_prompt_extras = [f"Today's date and time: {detailed_time}."]
+        # system_prompt_extras = [f"Today's date: {dt.now().strftime('%B %d %Y')}."]
         if accept_usernames:
+            system_prompt_extras.append(f"{discord_client.user.id} 是你的 ID，如果有人提到{discord_client.user.id}就是在說你")
             system_prompt_extras.append("User's names are their Discord IDs and should be typed as '<@ID>'.")
+            
 
         full_system_prompt = "\n".join([system_prompt] + system_prompt_extras)
         messages.append(dict(role="system", content=full_system_prompt))
@@ -211,7 +265,12 @@ async def on_message(new_msg):
     for warning in sorted(user_warnings):
         embed.add_field(name=warning, value="", inline=False)
 
-    kwargs = dict(model=model, messages=messages[::-1], stream=True, extra_body=cfg["extra_api_parameters"])
+    kwargs = dict(
+        model=model, 
+        messages=messages[::-1], 
+        stream=True, 
+        extra_body=cfg["extra_api_parameters"]
+    )
     try:
         async with new_msg.channel.typing():
             async for curr_chunk in await openai_client.chat.completions.create(**kwargs):
