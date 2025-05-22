@@ -1,7 +1,8 @@
 import yaml
 import logging
+from typing import Dict, Any
 
-def load_config(filename="config.yaml"):
+def load_config(filename: str = "config.yaml") -> Dict[str, Any]:
     """
     Reads the configuration file and returns its contents.
     
@@ -18,7 +19,7 @@ def load_config(filename="config.yaml"):
         logging.error(f"Failed to load config from {filename}: {e}")
         raise
 
-def reload_config(filename="config.yaml"):
+def reload_config(filename: str = "config.yaml") -> Dict[str, Any]:
     """
     Reloads configuration from the file.
     

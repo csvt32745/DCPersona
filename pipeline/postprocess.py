@@ -2,6 +2,7 @@ import discord
 import asyncio
 import logging
 from discordbot.msg_node import MsgNode
+from typing import Dict, Any, Set, List
 
 # Constants
 EMBED_COLOR_COMPLETE = discord.Color.dark_green()
@@ -9,7 +10,14 @@ EMBED_COLOR_INCOMPLETE = discord.Color.orange()
 STREAMING_INDICATOR = " ⚪"
 EDIT_DELAY_SECONDS = 1
 
-async def format_llm_output_and_reply(llm_response_content, finish_reason, new_msg, user_warnings, cfg, msg_nodes):
+async def format_llm_output_and_reply(
+    llm_response_content: str,
+    finish_reason: str,
+    new_msg: discord.Message,
+    user_warnings: Set[str],
+    cfg: Dict[str, Any],
+    msg_nodes: Dict[int, MsgNode]
+) -> None:
     """
     Formats the LLM response and sends it as a reply on Discord.
     
@@ -49,7 +57,7 @@ async def format_llm_output_and_reply(llm_response_content, finish_reason, new_m
         for warning in sorted(user_warnings):
             embed.add_field(name=warning, value="", inline=False)
     
-    response_msgs = []
+    response_msgs: List[discord.Message] = []
     
     try:
         async with new_msg.channel.typing():

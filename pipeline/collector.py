@@ -4,25 +4,33 @@ import asyncio
 from base64 import b64encode
 from discordbot.msg_node import MsgNode, msg_nodes
 
-async def collect_message(new_msg, cfg, discord_client_user, msg_nodes, 
-                         max_text=4000, max_images=4, max_messages=10, 
-                         is_casual_chat=False, httpx_client=None):
+async def collect_message(
+    new_msg: discord.Message,
+    cfg: dict,
+    discord_client_user: discord.User,
+    msg_nodes: dict,
+    max_text: int = 4000,
+    max_images: int = 4,
+    max_messages: int = 10,
+    is_casual_chat: bool = False,
+    httpx_client = None
+) -> dict:
     """
     Collects and processes message content and builds the conversation history chain.
-    
+
     Args:
-        new_msg (discord.Message): The new message to process
-        cfg (dict): Configuration data
-        discord_client_user (discord.User): The bot's Discord user object
-        msg_nodes (dict): Dictionary of message nodes for caching
-        max_text (int): Maximum text length per message
-        max_images (int): Maximum number of images per message
-        max_messages (int): Maximum number of messages in history
-        is_casual_chat (bool): Whether this is a casual conversation
-        httpx_client (httpx.AsyncClient): HTTP client for fetching attachments
-        
+        new_msg (discord.Message): The new message to process.
+        cfg (dict): Configuration data.
+        discord_client_user (discord.User): The bot's Discord user object.
+        msg_nodes (dict): Dictionary of message nodes for caching.
+        max_text (int, optional): Maximum text length per message. Defaults to 4000.
+        max_images (int, optional): Maximum number of images per message. Defaults to 4.
+        max_messages (int, optional): Maximum number of messages in history. Defaults to 10.
+        is_casual_chat (bool, optional): Whether this is a casual conversation. Defaults to False.
+        httpx_client (httpx.AsyncClient, optional): HTTP client for fetching attachments. Defaults to None.
+
     Returns:
-        dict: Dictionary containing processed messages and user warnings
+        dict: Dictionary containing processed messages and user warnings.
     """
     messages = []
     user_warnings = set()
@@ -41,7 +49,7 @@ async def collect_message(new_msg, cfg, discord_client_user, msg_nodes,
     
     # Process message chain
     while curr_msg != None and len(messages) < max_messages:
-        curr_node = msg_nodes.setdefault(curr_msg.id, MsgNode())
+        curr_node: MsgNode = msg_nodes.setdefault(curr_msg.id, MsgNode())
         
         async with curr_node.lock:
             if curr_node.text == None:

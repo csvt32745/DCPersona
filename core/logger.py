@@ -1,6 +1,7 @@
 import logging
+from typing import Dict, Any
 
-def setup_logger(cfg):
+def setup_logger(cfg: Dict[str, Any]) -> None:
     """
     Sets up the logger based on configuration.
     

@@ -1,4 +1,3 @@
-# filepath: e:\research\rag\llmcord\discordbot\message_handler.py
 import discord
 import logging
 import asyncio
@@ -8,7 +7,7 @@ from openai import AsyncOpenAI
 
 from core.config import reload_config
 from core.utils import random_system_prompt
-from discordbot.msg_node import msg_nodes, MsgNode, MAX_MESSAGE_NODES
+from discordbot.msg_node import msg_nodes, MAX_MESSAGE_NODES
 from pipeline import collector, llm, postprocess
 
 # Constants
@@ -18,7 +17,7 @@ PROVIDERS_SUPPORTING_USERNAMES = ("openai", "x-ai")
 # Global HTTP client for making requests
 httpx_client = httpx.AsyncClient()
 
-async def process_message(new_msg: discord.Message):
+async def on_message(new_msg: discord.Message):
     """
     Main message handler function that processes incoming Discord messages.
     
@@ -153,6 +152,10 @@ def register_handlers(discord_client, cfg):
     """
     @discord_client.event
     async def on_message(message):
-        await process_message(message)
+        await handle_message(message)
         
     logging.info("Message handler registered")
+
+async def handle_message(new_msg: discord.Message):
+    """Wrapper function to avoid name conflicts with the event handler"""
+    await on_message(new_msg)

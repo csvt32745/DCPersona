@@ -32,3 +32,4 @@
 # Re-ignore __pycache__ directories and .pyc files
 __pycache__/
 *.pyc
+config.yaml
