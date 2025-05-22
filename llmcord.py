@@ -16,7 +16,7 @@ logging.basicConfig(
     format="%(asctime)s %(levelname)s: %(message)s",
 )
 
-VISION_MODEL_TAGS = ("gpt-4", "o3", "o4", "claude-3", "gemini", "gemma", "llama", "pixtral", "mistral-small", "vision", "vl")
+VISION_MODEL_TAGS = ("gpt-4", "o3", "o4", "claude-3", "gemini", "gemma", "llama", "pixtral", "mistral", "vision", "vl")
 PROVIDERS_SUPPORTING_USERNAMES = ("openai", "x-ai")
 
 EMBED_COLOR_COMPLETE = discord.Color.dark_green()
@@ -25,7 +25,7 @@ EMBED_COLOR_INCOMPLETE = discord.Color.orange()
 STREAMING_INDICATOR = " ⚪"
 EDIT_DELAY_SECONDS = 1
 
-MAX_MESSAGE_NODES = 100
+MAX_MESSAGE_NODES = 500
 
 
 def get_config(filename="config.yaml"):
@@ -43,13 +43,16 @@ def random_system_prompt(root="persona"):
     return get_prompt(filename)
 
 cfg = get_config()
+bot_token = cfg["bot_token"]
 
 if client_id := cfg["client_id"]:
     logging.info(f"\n\nBOT INVITE URL:\nhttps://discord.com/api/oauth2/authorize?client_id={client_id}&permissions=412317273088&scope=bot\n")
 
+status_message = cfg["status_message"] or "github.com/jakobdylanc/llmcord"
+
 intents = discord.Intents.default()
 intents.message_content = True
-activity = discord.CustomActivity(name=(cfg["status_message"] or "github.com/jakobdylanc/llmcord")[:128])
+activity = discord.CustomActivity(name=status_message[:128])
 discord_client = discord.Client(intents=intents, activity=activity)
 
 httpx_client = httpx.AsyncClient()
@@ -105,7 +108,6 @@ async def on_message(new_msg: discord.Message):
     role_ids = set(role.id for role in getattr(new_msg.author, "roles", ()))
     channel_ids = set(filter(None, (new_msg.channel.id, getattr(new_msg.channel, "parent_id", None), getattr(new_msg.channel, "category_id", None))))
 
-    cfg = get_config()
 
     allow_dms = cfg["allow_dms"]
     permissions = cfg["permissions"]
@@ -133,8 +135,9 @@ async def on_message(new_msg: discord.Message):
     
     provider_slash_model = cfg["model"]
     provider, model = provider_slash_model.split("/", 1)
-    base_url = cfg["providers"][provider]["base_url"]
-    api_key = cfg["providers"][provider].get("api_key", "sk-no-key-required")
+    providers = cfg["providers"]
+    base_url = providers[provider]["base_url"]
+    api_key = providers[provider].get("api_key", "sk-no-key-required")
     openai_client = AsyncOpenAI(base_url=base_url, api_key=api_key)
 
     accept_images = any(x in model.lower() for x in VISION_MODEL_TAGS)
@@ -273,7 +276,7 @@ async def on_message(new_msg: discord.Message):
     )
     try:
         async with new_msg.channel.typing():
-            async for curr_chunk in await openai_client.chat.completions.create(**kwargs):
+            async for curr_chunk in await openai_client.chat.completions.create(model=model, messages=messages[::-1], stream=True, extra_body=extra_api_parameters):
                 if finish_reason != None:
                     break
 
@@ -341,7 +344,7 @@ async def on_message(new_msg: discord.Message):
 
 
 async def main():
-    await discord_client.start(cfg["bot_token"])
+    await discord_client.start(bot_token)
 
 
 asyncio.run(main())
