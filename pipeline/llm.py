@@ -3,6 +3,7 @@ import logging
 from datetime import datetime
 from typing import List, Dict, Any, Optional, Union, AsyncGenerator
 from openai import AsyncOpenAI
+import pytz
 
 # Google Search tool definition
 google_search_tool: List[Dict[str, Any]] = [
@@ -46,14 +47,21 @@ def build_llm_input(collected_messages: List[Dict[str, str]],
         list: Final messages list ready for LLM input
     """
     if datetime_now is None:
-        datetime_now = datetime.now()
+        tz = pytz.timezone("Asia/Taipei")
+        datetime_now = datetime.now(tz)
+    else:
+        # If datetime_now is naive, localize it to Asia/Taipei
+        if datetime_now.tzinfo is None:
+            tz = pytz.timezone("Asia/Taipei")
+            datetime_now = tz.localize(datetime_now)
+        else:
+            datetime_now = datetime_now.astimezone(pytz.timezone("Asia/Taipei"))
         
     # Add additional information to system prompt
-    detailed_time: str = datetime_now.strftime("%Y-%m-%d %A %H:%M")
+    detailed_time: str = datetime_now.strftime("%Y-%m-%d %A %H:%M (UTC+8)")
     system_prompt_extras: List[str] = [f"Today's date and time: {detailed_time}."]
-    
     if accept_usernames:
-        system_prompt_extras.append(f"{discord_client_user_id} 是你的 ID，如果有人提到{discord_client_user_id}就是在說你")
+        system_prompt_extras.append(f"{discord_client_user_id} 是你的 ID，如果有人提到 {discord_client_user_id} 就是在說你")
         system_prompt_extras.append("User's names are their Discord IDs and should be typed as '<@ID>'.")
     
     # Create final system prompt

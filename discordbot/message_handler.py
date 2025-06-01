@@ -7,7 +7,7 @@ from openai import AsyncOpenAI
 
 from core.config import reload_config
 from core.utils import random_system_prompt
-from discordbot.msg_node import msg_nodes, MAX_MESSAGE_NODES
+from discordbot.msg_node import msg_nodes, MAX_MESSAGE_NODES, MsgNode
 from pipeline import collector, llm, postprocess
 
 # Constants
