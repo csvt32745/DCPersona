@@ -58,7 +58,7 @@ def build_llm_input(collected_messages: List[Dict[str, str]],
             datetime_now = datetime_now.astimezone(pytz.timezone("Asia/Taipei"))
         
     # Add additional information to system prompt
-    detailed_time: str = datetime_now.strftime("%Y-%m-%d %A %H:%M (UTC+8)")
+    detailed_time: str = datetime_now.strftime("%Y-%m-%d %A %H:%M")
     system_prompt_extras: List[str] = [f"Today's date and time: {detailed_time}."]
     if accept_usernames:
         system_prompt_extras.append(f"{discord_client_user_id} 是你的 ID，如果有人提到 {discord_client_user_id} 就是在說你")

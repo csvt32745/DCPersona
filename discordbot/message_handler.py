@@ -109,8 +109,7 @@ async def on_message(new_msg: discord.Message):
         system_prompt_parts=system_prompt_parts,
         cfg=cfg, 
         discord_client_user_id=new_msg.guild.me.id if not is_dm else new_msg.channel.me.id,
-        accept_usernames=accept_usernames,
-        datetime_now=datetime.now()
+        accept_usernames=accept_usernames
     )
     
     # Call LLM API
