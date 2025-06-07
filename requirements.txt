@@ -1,5 +1,28 @@
+# 原有依賴
 discord.py
 httpx
 openai
 pyyaml
 pytz
+
+# LangGraph 核心依賴
+langgraph>=0.2.0
+langchain-core>=0.3.0
+langchain-google-genai>=2.0.0
+
+# Google AI 和搜尋 API
+google-generativeai>=0.8.0
+google-api-python-client>=2.0.0
+
+# 資料處理和驗證
+pydantic>=2.0.0
+typing-extensions>=4.0.0
+
+# 異步支援
+asyncio
+aiofiles
+
+# 可選：開發和調試工具
+# pytest>=7.0.0
+# pytest-asyncio>=0.21.0
+# jupyter>=1.0.0

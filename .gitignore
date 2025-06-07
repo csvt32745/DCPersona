@@ -3,6 +3,8 @@
 *
 # Allow directories
 !assets/
+!agents/
+!agents/**
 !core/
 !core/**
 !discordbot/
