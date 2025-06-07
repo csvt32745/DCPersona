@@ -224,21 +224,30 @@ def analyze_message_complexity(content: str) -> Dict[str, Any]:
     """
     content_lower = content.lower()
     
+    # 檢查強制研究關鍵字
+    force_research_keywords = [
+        "!research", "!研究", "!調查", "!深入",
+        "!search", "!搜尋", "!分析"
+    ]
+    has_force_keywords = any(keyword in content_lower for keyword in force_research_keywords)
+    
     # 複雜度指標
     indicators = {
         "length": len(content.split()) > 15,  # 長文本
         "multiple_questions": content.count("?") > 1 or content.count("？") > 1,  # 多個問題
-        "comparison_words": any(word in content_lower for word in 
+        "comparison_words": any(word in content_lower for word in
                                ["比較", "對比", "差異", "優缺點", "vs", "versus"]),
-        "research_keywords": any(word in content_lower for word in 
+        "research_keywords": any(word in content_lower for word in
                                 ["研究", "調查", "分析", "詳細", "深入", "為什麼", "如何"]),
-        "current_info": any(word in content_lower for word in 
+        "current_info": any(word in content_lower for word in
                            ["最新", "2024", "2025", "現在", "目前", "今年"]),
         "technical_terms": len(re.findall(r'[A-Z]{2,}|[a-z]+[A-Z][a-z]*', content)) > 2,
+        "force_research": has_force_keywords,  # 新增強制研究指標
     }
     
-    # 計算複雜度評分
-    complexity_score = sum(indicators.values()) / len(indicators)
+    # 計算複雜度評分（強制研究會大幅提高分數）
+    base_score = sum(v for k, v in indicators.items() if k != "force_research") / (len(indicators) - 1)
+    complexity_score = 1.0 if has_force_keywords else base_score
     
     # 檢測到的關鍵字
     detected_keywords = []
@@ -248,12 +257,197 @@ def analyze_message_complexity(content: str) -> Dict[str, Any]:
         detected_keywords.append("研究關鍵字")
     if indicators["current_info"]:
         detected_keywords.append("時效性資訊")
+    if indicators["force_research"]:
+        detected_keywords.append("強制研究指令")
+    if indicators["length"]:
+        detected_keywords.append("長文本")
+    if indicators["multiple_questions"]:
+        detected_keywords.append("多重問題")
     
     return {
         "complexity_score": complexity_score,
         "indicators": indicators,
         "detected_keywords": detected_keywords,
-        "use_research": complexity_score >= 0.4,  # 閾值可調整
+        "use_research": complexity_score >= 0.33 or has_force_keywords,  # 降低閾值，強制研究或達到閾值
+    }
+
+
+def parse_complexity_assessment_result(llm_response: str) -> Dict[str, Any]:
+    """
+    解析來自 complexity_assessment_prompt 的 LLM 回應
+    
+    Args:
+        llm_response: LLM 的 JSON 格式回應
+        
+    Returns:
+        Dict: 解析後的複雜度評估結果
+    """
+    import json
+    import logging
+    
+    logger = logging.getLogger(__name__)
+    
+    try:
+        # 嘗試解析 JSON 回應
+        if llm_response.strip().startswith('{') and llm_response.strip().endswith('}'):
+            result = json.loads(llm_response.strip())
+            
+            # 驗證必要字段
+            required_fields = ["decision", "confidence", "reasoning"]
+            if not all(field in result for field in required_fields):
+                logger.warning(f"LLM 複雜度評估回應缺少必要字段: {result}")
+                return _create_fallback_assessment(llm_response)
+            
+            # 標準化 decision 值
+            decision = str(result["decision"]).upper().strip()
+            if decision not in ["RESEARCH", "SIMPLE"]:
+                logger.warning(f"無效的 decision 值: {decision}")
+                decision = "SIMPLE"  # 預設為簡單模式
+            
+            # 驗證和標準化 confidence
+            try:
+                confidence = float(result["confidence"])
+                if not (0.0 <= confidence <= 1.0):
+                    confidence = 0.5  # 預設中等信心
+            except (ValueError, TypeError):
+                confidence = 0.5
+            
+            return {
+                "decision": decision,
+                "use_research": decision == "RESEARCH",
+                "confidence": confidence,
+                "reasoning": str(result.get("reasoning", "")),
+                "triggered_criteria": result.get("triggered_criteria", []),
+                "method": "llm_assessment",
+                "raw_response": llm_response
+            }
+            
+        else:
+            # 處理非 JSON 格式的回應（向後相容）
+            return _parse_simple_response(llm_response)
+            
+    except json.JSONDecodeError as e:
+        logger.warning(f"解析 LLM 複雜度評估 JSON 失敗: {e}")
+        return _create_fallback_assessment(llm_response)
+    except Exception as e:
+        logger.error(f"處理 LLM 複雜度評估時發生錯誤: {e}")
+        return _create_fallback_assessment(llm_response)
+
+
+def _parse_simple_response(response: str) -> Dict[str, Any]:
+    """
+    解析簡單的 RESEARCH/SIMPLE 回應（向後相容）
+    """
+    response_upper = response.upper().strip()
+    
+    if "RESEARCH" in response_upper:
+        decision = "RESEARCH"
+        use_research = True
+        confidence = 0.8
+    elif "SIMPLE" in response_upper:
+        decision = "SIMPLE"
+        use_research = False
+        confidence = 0.8
+    else:
+        decision = "SIMPLE"
+        use_research = False
+        confidence = 0.3
+    
+    return {
+        "decision": decision,
+        "use_research": use_research,
+        "confidence": confidence,
+        "reasoning": "基於簡單回應格式的判斷",
+        "triggered_criteria": [],
+        "method": "simple_response",
+        "raw_response": response
+    }
+
+
+def _create_fallback_assessment(response: str) -> Dict[str, Any]:
+    """
+    創建降級的複雜度評估結果
+    """
+    return {
+        "decision": "SIMPLE",
+        "use_research": False,
+        "confidence": 0.3,
+        "reasoning": "解析失敗，使用預設判斷",
+        "triggered_criteria": [],
+        "method": "fallback",
+        "raw_response": response
+    }
+
+
+def combine_complexity_assessments(
+    llm_assessment: Optional[Dict[str, Any]],
+    rule_assessment: Dict[str, Any],
+    force_research: bool = False
+) -> Dict[str, Any]:
+    """
+    結合 LLM 評估和規則評估的結果
+    
+    Args:
+        llm_assessment: LLM 複雜度評估結果
+        rule_assessment: 規則型複雜度評估結果
+        force_research: 是否強制使用研究模式
+        
+    Returns:
+        Dict: 綜合評估結果
+    """
+    # 如果強制研究，直接返回
+    if force_research:
+        return {
+            "final_decision": "RESEARCH",
+            "use_research": True,
+            "confidence": 1.0,
+            "reasoning": "使用者強制啟動研究模式",
+            "method": "force_research",
+            "llm_assessment": llm_assessment,
+            "rule_assessment": rule_assessment
+        }
+    
+    # 如果沒有 LLM 評估，使用規則評估
+    if not llm_assessment:
+        return {
+            "final_decision": "RESEARCH" if rule_assessment["use_research"] else "SIMPLE",
+            "use_research": rule_assessment["use_research"],
+            "confidence": rule_assessment["complexity_score"],
+            "reasoning": f"基於規則評估，檢測到: {', '.join(rule_assessment['detected_keywords'])}",
+            "method": "rule_based",
+            "llm_assessment": None,
+            "rule_assessment": rule_assessment
+        }
+    
+    # 結合兩種評估方法
+    llm_wants_research = llm_assessment["use_research"]
+    rule_wants_research = rule_assessment["use_research"]
+    
+    # 如果兩者都建議研究，使用研究模式
+    if llm_wants_research and rule_wants_research:
+        final_decision = "RESEARCH"
+        confidence = min(llm_assessment["confidence"] + 0.2, 1.0)
+    # 如果只有一個建議研究，根據信心決定
+    elif llm_wants_research or rule_wants_research:
+        if llm_assessment["confidence"] > 0.7 or rule_assessment["complexity_score"] > 0.6:
+            final_decision = "RESEARCH"
+            confidence = max(llm_assessment["confidence"], rule_assessment["complexity_score"])
+        else:
+            final_decision = "SIMPLE"
+            confidence = 0.5
+    # 如果兩者都不建議研究，使用簡單模式
+    else:
+        final_decision = "SIMPLE"
+        confidence = max(llm_assessment["confidence"], rule_assessment["complexity_score"])
+    
+    return {
+        "final_decision": final_decision,
+        "use_research": final_decision == "RESEARCH",
+        "confidence": confidence,
+        "reasoning": f"LLM評估: {llm_assessment['reasoning']}; 規則評估: {', '.join(rule_assessment['detected_keywords'])}",
+        "method": "combined",
+        "llm_assessment": llm_assessment,
+        "rule_assessment": rule_assessment
     }
 
 
@@ -420,3 +614,118 @@ def get_language_from_content(content: str) -> str:
         return 'en'
     else:
         return 'zh'  # 預設中文
+    
+async def assess_message_complexity_with_llm(
+    message_content: str,
+    llm_client,
+    fallback_to_rules: bool = True,
+    model_name: str = "gpt-3.5-turbo"
+) -> Dict[str, Any]:
+    """
+    使用 LLM 進行複雜度評估的完整流程（支援 LangChain 和 OpenAI 客戶端）
+    
+    Args:
+        message_content: 訊息內容
+        llm_client: LLM 客戶端（LangChain 或 OpenAI）
+        fallback_to_rules: 如果 LLM 評估失敗，是否降級到規則評估
+        
+    Returns:
+        Dict: 綜合複雜度評估結果
+    """
+    import logging
+    from .prompts import complexity_assessment_prompt
+    
+    logger = logging.getLogger(__name__)
+    
+    # 執行規則型評估（作為基準）
+    rule_assessment = analyze_message_complexity(message_content)
+    
+    # 檢查是否強制研究模式
+    force_research = _check_force_research_keywords(message_content)
+    
+    llm_assessment = None
+    
+    # 嘗試使用 LLM 評估
+    if llm_client:
+        try:
+            # 格式化提示
+            formatted_prompt = complexity_assessment_prompt.format(message=message_content)
+            
+            # 判斷客戶端類型並調用相應方法
+            if hasattr(llm_client, 'ainvoke'):
+                # LangChain 客戶端
+                response = await llm_client.ainvoke(formatted_prompt)
+                response_content = response.content if hasattr(response, 'content') else str(response)
+            elif hasattr(llm_client, 'chat'):
+                # OpenAI 客戶端
+                response_content = await _call_openai_for_complexity(llm_client, formatted_prompt, model_name)
+            else:
+                raise ValueError(f"不支援的 LLM 客戶端類型: {type(llm_client)}")
+            
+            # 解析回應
+            llm_assessment = parse_complexity_assessment_result(response_content)
+            
+            logger.info(f"LLM 複雜度評估完成: {llm_assessment['decision']} (信心: {llm_assessment['confidence']:.2f})")
+            
+        except Exception as e:
+            logger.warning(f"LLM 複雜度評估失敗: {e}")
+            if not fallback_to_rules:
+                raise
+    
+    # 結合評估結果
+    final_result = combine_complexity_assessments(
+        llm_assessment=llm_assessment,
+        rule_assessment=rule_assessment,
+        force_research=force_research
+    )
+    
+    logger.info(f"最終複雜度評估: {final_result['final_decision']} "
+               f"(方法: {final_result['method']}, 信心: {final_result['confidence']:.2f})")
+    
+    return final_result
+
+
+async def _call_openai_for_complexity(openai_client, formatted_prompt: str, model_name: str = "gpt-3.5-turbo") -> str:
+    """
+    使用 OpenAI 客戶端進行複雜度評估調用
+    
+    Args:
+        openai_client: OpenAI AsyncOpenAI 客戶端
+        formatted_prompt: 格式化的提示詞
+        model_name: 使用的模型名稱
+        
+    Returns:
+        str: LLM 回應內容
+    """
+    messages = [
+        {"role": "system", "content": "妳是三角初華，一位溫柔的高中生，需要評估訊息複雜度。請根據提示詞的要求，準確返回 JSON 格式的評估結果。"},
+        {"role": "user", "content": formatted_prompt}
+    ]
+    
+    # 調用 OpenAI API
+    response = await openai_client.chat.completions.create(
+        model=model_name,
+        messages=messages,
+        temperature=0.1,  # 低溫度確保一致性
+        max_tokens=500
+    )
+    
+    return response.choices[0].message.content
+
+
+def _check_force_research_keywords(content: str) -> bool:
+    """
+    檢查強制研究關鍵字
+    
+    Args:
+        content: 訊息內容
+        
+    Returns:
+        bool: 是否包含強制研究關鍵字
+    """
+    force_keywords = [
+        "!research", "!研究", "!調查", "!深入",
+        "!search", "!搜尋", "!分析"
+    ]
+    content_lower = content.lower()
+    return any(keyword in content_lower for keyword in force_keywords)

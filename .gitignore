@@ -3,6 +3,7 @@
 *
 # Allow directories
 !assets/
+!tests/
 !agents/
 !agents/**
 !core/

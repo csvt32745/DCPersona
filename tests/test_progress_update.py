@@ -26,18 +26,27 @@ class MockDiscordMessage:
         self.author.id = 67890
         self.reply = AsyncMock()
         self.edit = AsyncMock()
+        self.embeds = []
     
-    async def reply(self, content: str, mention_author: bool = False):
+    async def reply(self, content: str = None, embed=None, mention_author: bool = False):
         """模擬回覆消息"""
         reply_msg = MockDiscordMessage(self.channel.id, self.id + 1)
-        reply_msg.content = content
-        logger.info(f"發送回覆: {content}")
+        if content:
+            reply_msg.content = content
+            logger.info(f"發送回覆: {content}")
+        if embed:
+            reply_msg.embeds = [embed]
+            logger.info(f"發送 Embed 回覆: {embed.description[:100] if embed.description else 'No description'}...")
         return reply_msg
     
-    async def edit(self, content: str):
+    async def edit(self, content: str = None, embed=None):
         """模擬編輯消息"""
-        self.content = content
-        logger.info(f"編輯消息: {content}")
+        if content:
+            self.content = content
+            logger.info(f"編輯消息: {content}")
+        if embed:
+            self.embeds = [embed]
+            logger.info(f"編輯 Embed: {embed.description[:100] if embed.description else 'No description'}...")
         return self
 
 
@@ -209,12 +218,88 @@ async def main():
         await test_progress_manager()
         await test_progress_formatting()
         await test_concurrent_progress()
+        await test_embed_formatting()
         
         logger.info("🎉 所有測試通過！")
         
     except Exception as e:
         logger.error(f"❌ 測試失敗: {str(e)}", exc_info=True)
         raise
+
+
+async def test_embed_formatting():
+    """測試 embed 格式化功能"""
+    logger.info("🧪 開始測試 embed 格式化...")
+    
+    # 創建模擬消息
+    original_msg = MockDiscordMessage(channel_id=12345)
+    
+    # 測試完成狀態的 embed 格式
+    final_answer = """根據我的研究，人工智慧在未來將會有以下幾個重要發展趨勢：
+
+1. **更強的推理能力** - AI 系統將具備更好的邏輯推理和問題解決能力
+2. **多模態整合** - 能夠同時處理文字、圖像、音訊等多種數據類型
+3. **個人化應用** - 根據個人需求提供客製化的 AI 助手服務
+
+這些發展將深刻改變我們的工作和生活方式 ✨"""
+    
+    # 模擬來源資訊
+    sources = [
+        {
+            "label": "MIT Technology Review - AI 發展趨勢報告",
+            "value": "https://example.com/ai-trends-2024",
+            "title": "AI 發展趨勢報告"
+        },
+        {
+            "label": "Nature - 人工智慧研究進展",
+            "value": "https://example.com/nature-ai-research",
+            "title": "人工智慧研究進展"
+        },
+        {
+            "label": "IEEE Spectrum - 未來 AI 技術展望",
+            "value": "https://example.com/ieee-ai-future",
+            "title": "未來 AI 技術展望"
+        }
+    ]
+    
+    # 測試完成狀態的進度更新
+    completed_progress = DiscordProgressUpdate(
+        stage="completed",
+        message="研究完成！",
+        progress_percentage=100
+    )
+    
+    logger.info("📝 測試最終答案的 embed 格式...")
+    result_msg = await DiscordTools.send_progress_update(
+        original_msg,
+        completed_progress,
+        edit_previous=False,  # 創建新消息以便檢查
+        final_answer=final_answer,
+        sources=sources
+    )
+    
+    assert result_msg is not None, "應該成功創建最終答案消息"
+    logger.info("✅ 最終答案 embed 格式測試完成")
+    
+    # 測試進度狀態的 embed 格式
+    logger.info("📝 測試進度狀態的 embed 格式...")
+    progress_update = DiscordProgressUpdate(
+        stage="web_research",
+        message="正在進行網路研究",
+        progress_percentage=60,
+        eta_seconds=15
+    )
+    
+    result_msg2 = await DiscordTools.send_progress_update(
+        original_msg,
+        progress_update,
+        edit_previous=False  # 創建新消息以便檢查
+    )
+    
+    assert result_msg2 is not None, "應該成功創建進度消息"
+    logger.info("✅ 進度狀態 embed 格式測試完成")
+    
+    logger.info("✅ Embed 格式化測試完成")
 
 
 if __name__ == "__main__":

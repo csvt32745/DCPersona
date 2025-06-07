@@ -111,6 +111,7 @@ class ResearchProgress:
     loop_count: int = 0  # 循環計數
     sources_found: int = 0  # 找到的來源數
     final_answer: Optional[str] = None  # 最終答案
+    sources: Optional[List[Dict[str, Any]]] = None  # 來源資訊
     
     def get_progress_message(self) -> str:
         """獲取進度訊息"""

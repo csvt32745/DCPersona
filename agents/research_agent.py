@@ -458,6 +458,7 @@ class ResearchAgent:
                 progress = self.current_progress[session_id]
                 progress.stage = "completed"
                 progress.final_answer = final_content  # 保存最終答案到進度對象
+                progress.sources = unique_sources  # 保存來源資訊到進度對象
             
             return {
                 "messages": [AIMessage(content=final_content)],
@@ -476,6 +477,7 @@ class ResearchAgent:
                 progress = self.current_progress[session_id]
                 progress.stage = "error"
                 progress.final_answer = fallback_response
+                progress.sources = state.get("sources_gathered", [])  # 保存已收集的來源
             
             return {
                 "messages": [AIMessage(content=fallback_response)],
@@ -548,12 +550,14 @@ class ResearchAgent:
                 
                 # 檢查是否有最終答案需要整合
                 final_answer = getattr(progress, 'final_answer', None)
+                sources = getattr(progress, 'sources', None)
                 
                 # 發送或更新進度消息
                 if stage == "completed" and final_answer:
                     # 如果是完成狀態且有最終答案，使用整合功能
                     progress_msg = await DiscordTools.send_progress_update(
-                        message, discord_progress, edit_previous=True, final_answer=final_answer
+                        message, discord_progress, edit_previous=True,
+                        final_answer=final_answer, sources=sources
                     )
                 else:
                     # 正常的進度更新

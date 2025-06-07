@@ -2,110 +2,219 @@
   llmcord
 </h1>
 
-<h3 align="center"><i>
-  Talk to LLMs with your friends!
-</i></h3>
-
 <p align="center">
-  <img src="https://github.com/jakobdylanc/llmcord/assets/38699060/789d49fe-ef5c-470e-b60e-48ac03057443" alt="">
+  <img src="https://github.com/jakobdylanc/llmcord/assets/38699060/789d49fe-ef5c-470e-b60e-48ac03057443" alt="llmcord banner">
 </p>
 
-llmcord transforms Discord into a collaborative LLM frontend. It works with practically any LLM, remote or locally hosted.
+<p align="center">
+  <a href="https://github.com/jakobdylanc/llmcord/actions"><img src="https://img.shields.io/github/workflow/status/jakobdylanc/llmcord/CI?style=flat-square" alt="CI"></a>
+  <a href="https://github.com/jakobdylanc/llmcord/stargazers"><img src="https://img.shields.io/github/stars/jakobdylanc/llmcord?style=flat-square" alt="Stars"></a>
+  <a href="https://github.com/jakobdylanc/llmcord/blob/main/LICENSE.md"><img src="https://img.shields.io/github/license/jakobdylanc/llmcord?style=flat-square" alt="License"></a>
+</p>
 
-## Features
+<h3 align="center"><i>
+  Discord × LLM × 智能研究 × 互動體驗
+</i></h3>
 
-### Reply-based chat system
-Just @ the bot to start a conversation and reply to continue. Build conversations with reply chains!
+---
 
-You can:
-- Branch conversations endlessly
-- Continue other people's conversations
-- @ the bot while replying to ANY message to include it in the conversation
+## 目錄
 
-Additionally:
-- When DMing the bot, conversations continue automatically (no reply required). To start a fresh conversation, just @ the bot. You can still reply to continue from anywhere.
-- You can branch conversations into [threads](https://support.discord.com/hc/en-us/articles/4403205878423-Threads-FAQ). Just create a thread from any message and @ the bot inside to continue.
-- Back-to-back messages from the same user are automatically chained together. Just reply to the latest one and the bot will see all of them.
+- [目錄](#目錄)
+- [專案簡介](#專案簡介)
+- [功能特色](#功能特色)
+- [安裝與設定](#安裝與設定)
+  - [1. 下載專案](#1-下載專案)
+  - [2. 安裝依賴](#2-安裝依賴)
+  - [3. 複製並編輯設定檔](#3-複製並編輯設定檔)
+  - [4. 設定 Discord 與 API 金鑰](#4-設定-discord-與-api-金鑰)
+- [使用方法](#使用方法)
+  - [啟動 Bot](#啟動-bot)
+  - [Discord 互動方式](#discord-互動方式)
+    - [範例](#範例)
+- [專案結構](#專案結構)
+- [貢獻與支援](#貢獻與支援)
+- [Star History](#star-history)
 
-### Choose any LLM
-llmcord supports remote models from:
-- [OpenAI API](https://platform.openai.com/docs/models)
-- [xAI API](https://docs.x.ai/docs/models)
-- [Mistral API](https://docs.mistral.ai/getting-started/models/models_overview)
-- [Groq API](https://console.groq.com/docs/models)
-- [OpenRouter API](https://openrouter.ai/models)
+---
 
-Or run a local model with:
-- [Ollama](https://ollama.com)
-- [LM Studio](https://lmstudio.ai)
-- [vLLM](https://github.com/vllm-project/vllm)
+## 專案簡介
 
-...Or use any other OpenAI compatible API server.
+**llmcord** 將 Discord 變身為強大的 LLM 互動與智能研究平台。支援多種 LLM（OpenAI、Gemini、Ollama 等），並整合 LangGraph 智能研究系統，能根據問題自動切換簡單問答或多步驟研究模式，提供即時進度回報與多輪對話體驗。
 
-### And more:
-- Supports image attachments when using a vision model (like gpt-4.1, claude-3, llama-4, etc.)
-- Supports text file attachments (.txt, .py, .c, etc.)
-- Customizable personality (aka system prompt)
-- User identity aware (OpenAI API and xAI API only)
-- Streamed responses (turns green when complete, automatically splits into separate messages when too long)
-- Hot reloading config (you can change settings without restarting the bot)
-- Displays helpful warnings when appropriate (like "⚠️ Only using last 25 messages" when the customizable message limit is exceeded)
-- Caches message data in a size-managed (no memory leaks) and mutex-protected (no race conditions) global dictionary to maximize efficiency and minimize Discord API calls
-- Fully asynchronous
-- 1 Python file, ~200 lines of code
+---
 
-## Instructions
+## 功能特色
 
-1. Clone the repo:
-   ```bash
-   git clone https://github.com/jakobdylanc/llmcord
-   ```
+- **🌟 LangGraph 智能研究整合**
+  - 自動判斷問題複雜度，啟動多步驟研究
+  - 支援 `!research` 等關鍵字強制進入研究模式
+  - 研究過程即時進度回報，30 秒超時自動降級
+  - Discord 會話與研究狀態綁定，支援多輪追問
 
-2. Create a copy of "config-example.yaml" named "config.yaml" and set it up:
+- **💬 多樣 LLM 支援**
+  - OpenAI、xAI、Mistral、Groq、OpenRouter、Gemini、Ollama、LM Studio、vLLM 等
+  - 支援 OpenAI API 相容服務
 
-### Discord settings:
+- **🔗 附件與多模態**
+  - 支援圖片（vision model）、文字檔案等附件
+  - 可自訂系統人格（persona）
 
-| Setting | Description |
-| --- | --- |
-| **bot_token** | Create a new Discord bot at [discord.com/developers/applications](https://discord.com/developers/applications) and generate a token under the "Bot" tab. Also enable "MESSAGE CONTENT INTENT". |
-| **client_id** | Found under the "OAuth2" tab of the Discord bot you just made. |
-| **status_message** | Set a custom message that displays on the bot's Discord profile.<br />**Max 128 characters.** |
-| **max_text** | The maximum amount of text allowed in a single message, including text from file attachments.<br />(Default: `100,000`) |
-| **max_images** | The maximum number of image attachments allowed in a single message.<br />**Only applicable when using a vision model.**<br />(Default: `5`) |
-| **max_messages** | The maximum number of messages allowed in a reply chain. When exceeded, the oldest messages are dropped.<br />(Default: `25`) |
-| **use_plain_responses** | When set to `true` the bot will use plaintext responses instead of embeds. Plaintext responses have a shorter character limit so the bot's messages may split more often.<br />**Also disables streamed responses and warning messages.**<br />(Default: `false`) |
-| **allow_dms** | Set to `false` to disable direct message access.<br />(Default: `true`) |
-| **permissions** | Configure permissions for `users`, `roles` and `channels`, each with a list of `allowed_ids` and `blocked_ids`.<br />**Leave `allowed_ids` empty to allow ALL.**<br />**Role and channel permissions do not affect DMs.**<br />**You can use [category](https://support.discord.com/hc/en-us/articles/115001580171-Channel-Categories-101) IDs to control channel permissions in groups.** |
+- **⚡ 即時互動優化**
+  - 研究啟動時顯示「🔍 正在進行深度研究...」
+  - 每階段自動更新進度
+  - 進度更新與降級機制，確保流暢體驗
 
-### LLM settings:
+- **🧠 複雜度評估與模式切換**
+  - 自動評估問題複雜度，智慧切換回應流程
+  - 可自訂複雜度閾值與觸發關鍵字
 
-| Setting | Description |
-| --- | --- |
-| **providers** | Add the LLM providers you want to use, each with a `base_url` and optional `api_key` entry. Popular providers (`openai`, `ollama`, etc.) are already included.<br />**Only supports OpenAI compatible APIs.** |
-| **model** | Set to `<provider name>/<model name>`, e.g:<br />-`openai/gpt-4.1`<br />-`ollama/llama3.3`<br />-`openrouter/anthropic/claude-3.7-sonnet` |
-| **extra_api_parameters** | Extra API parameters for your LLM. Add more entries as needed.<br />**Refer to your provider's documentation for supported API parameters.**<br />(Default: `temperature=1.0`) |
-| **system_prompt** | Write anything you want to customize the bot's behavior!<br />**Leave blank for no system prompt.** |
+- **🛡️ 高效狀態管理**
+  - 會話自動清理、狀態持久化
+  - 多用戶多會話並行
 
-3. Run the bot:
+- **🧪 完善測試與模組化架構**
+  - agents/ 智能代理模組
+  - tests/ 單元與整合測試
 
-   **No Docker:**
-   ```bash
-   python -m pip install -U -r requirements.txt
-   python llmcord.py
-   ```
+---
 
-   **With Docker:**
-   ```bash
-   docker compose up
-   ```
+## 安裝與設定
 
-## Notes
+### 1. 下載專案
 
-- If you're having issues, try my suggestions [here](https://github.com/jakobdylanc/llmcord/issues/19)
+```bash
+git clone https://github.com/jakobdylanc/llmcord
+cd llmcord
+```
 
-- Only models from OpenAI API and xAI API are "user identity aware" because only they support the "name" parameter in the message object. Hopefully more providers support this in the future.
+### 2. 安裝依賴
 
-- PRs are welcome :)
+```bash
+pip install -r requirements.txt
+```
+
+### 3. 複製並編輯設定檔
+
+```bash
+cp config-example.yaml config.yaml
+```
+
+### 4. 設定 Discord 與 API 金鑰
+
+- **Discord Bot Token**：於 [Discord Developer Portal](https://discord.com/developers/applications) 建立 Bot，取得 `bot_token` 與 `client_id`，並啟用 MESSAGE CONTENT INTENT。
+- **LLM API 金鑰**：於 `config.yaml` 設定各 LLM 服務的 API 金鑰（如 OpenAI、Gemini 等）。
+- **LangGraph 智能研究**：
+  ```yaml
+  langgraph:
+    enabled: true
+    gemini_api_key: "YOUR_GEMINI_API_KEY"
+    google_search_api_key: "YOUR_GOOGLE_SEARCH_API_KEY"
+    google_search_engine_id: "YOUR_GOOGLE_SEARCH_ENGINE_ID"
+  ```
+
+詳細設定請參考 [`LANGGRAPH_INTEGRATION_GUIDE.md`](LANGGRAPH_INTEGRATION_GUIDE.md)。
+
+---
+
+## 使用方法
+
+### 啟動 Bot
+
+```bash
+python main.py
+```
+或使用 Docker：
+```bash
+docker compose up
+```
+
+### Discord 互動方式
+
+- **自動模式切換**：Bot 會根據訊息自動判斷是否進入研究模式
+- **強制研究模式**：訊息前綴 `!research` 強制啟動多步驟研究
+- **多輪對話**：支援基於會話的多輪追問與延續
+
+#### 範例
+
+- 簡單問答：
+  ```
+  用戶: 你好嗎？
+  初華: 我很好呢 ✨ 謝謝妳的關心...
+  ```
+- 複雜研究：
+  ```
+  用戶: !research 請分析 2024 年 AI 發展趨勢
+  初華: 🔍 讓我為妳進行深度研究...
+  初華: 🤔 正在思考最佳的搜尋策略...
+  初華: 📚 正在收集相關資料... (1/2)
+  初華: 📝 正在整理答案... 馬上就好了 ✨
+  初華: 根據我的研究，2024年AI發展呈現以下趨勢...
+  ```
+
+---
+
+## 專案結構
+
+```plaintext
+llmcord/
+│
+├── main.py                  # 主程式入口
+├── config.yaml              # 系統設定檔
+├── persona/                 # 系統提示詞
+│
+├── core/
+│   ├── config.py            # 設定管理
+│   ├── logger.py            # 日誌系統
+│   ├── utils.py             # 通用工具
+│   └── session_manager.py   # 會話與狀態管理
+│
+├── agents/
+│   ├── configuration.py     # 智能代理組態
+│   ├── prompts.py           # 代理提示詞
+│   ├── research_agent.py    # 研究型代理
+│   ├── state.py             # 狀態管理
+│   ├── tools_and_schemas.py # 工具與資料結構
+│   └── utils.py             # 代理輔助工具
+│
+├── discordbot/
+│   ├── client.py            # Discord client 初始化
+│   ├── message_handler.py   # 訊息處理主流程
+│   └── msg_node.py          # 訊息快取
+│
+├── pipeline/
+│   ├── collector.py         # 訊息收集與預處理
+│   ├── rag.py               # RAG 流程與 LangGraph 整合
+│   ├── llm.py               # LLM 輸入組裝
+│   └── postprocess.py       # 回覆後處理
+│
+├── tools/
+│   └── google_search.py     # Google Search 工具
+│
+├── tests/
+│   ├── test_progress_update.py
+│   ├── test_embed_integration.py
+│   ├── test_complexity_assessment.py
+│   ├── test_integration.py
+│   └── test_llm_complexity_integration.py
+│
+├── LANGGRAPH_INTEGRATION_GUIDE.md   # LangGraph 整合指南
+├── llmcord_structure.md             # 專案結構說明
+├── llmcord.py                       # 主要邏輯入口
+├── README.md                        # 專案說明
+├── requirements.txt                 # 依賴套件列表
+└── ...（其他文件略）
+```
+
+---
+
+## 貢獻與支援
+
+- 歡迎提交 Issue 與 Pull Request，請遵循專案風格並附上測試
+- 常見問題與故障排除請參考 [`LANGGRAPH_INTEGRATION_GUIDE.md`](LANGGRAPH_INTEGRATION_GUIDE.md)
+- 有任何疑問歡迎於 GitHub 提出
+
+---
 
 ## Star History
 
@@ -116,3 +225,7 @@ Or run a local model with:
     <img alt="Star History Chart" src="https://api.star-history.com/svg?repos=jakobdylanc/llmcord&type=Date" />
   </picture>
 </a>
+
+---
+
+**llmcord 以 LangGraph 智能研究為核心，結合多層次代理架構與即時互動優化，讓初華能溫柔而堅定地陪伴妳，無論是簡單的問候還是複雜的研究，都能給妳最貼心的回應。✨**

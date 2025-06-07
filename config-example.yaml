@@ -80,7 +80,7 @@ langgraph:
   
   # 研究行為配置
   initial_queries: 2  # 初始搜尋查詢數量 (Discord 優化)
-  max_loops: 1  # 最大研究循環次數 (Discord 優化)
+  max_loops: 2  # 最大研究循環次數 (Discord 優化)
   timeout: 30  # 研究超時時間 (秒)
   
   # 智能模式切換

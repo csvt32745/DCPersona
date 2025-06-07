@@ -12,11 +12,12 @@ import asyncio
 from typing import Dict, Any, Optional, Tuple
 from datetime import datetime
 import discord
+from openai import AsyncOpenAI
 
 from agents.research_agent import ResearchAgent, create_research_agent_from_config, should_use_research_mode
 from agents.state import DiscordContext, ResearchConfig
 from agents.configuration import AgentConfiguration
-from agents.utils import analyze_message_complexity, generate_session_id
+from agents.utils import analyze_message_complexity, assess_message_complexity_with_llm, generate_session_id
 from agents.tools_and_schemas import ErrorHandler, DiscordTools
 from core.session_manager import get_session_manager
 
@@ -28,6 +29,8 @@ class SmartRAGPipeline:
         self.logger = logging.getLogger(__name__)
         self._research_agent: Optional[ResearchAgent] = None
         self._agent_config: Optional[AgentConfiguration] = None
+        self._llm_client: Optional[AsyncOpenAI] = None
+        self._cfg: Optional[Dict[str, Any]] = None
     
     async def initialize(self, llmcord_config: Dict[str, Any]):
         """
@@ -37,6 +40,12 @@ class SmartRAGPipeline:
             llmcord_config: llmcord 配置
         """
         try:
+            # 儲存配置
+            self._cfg = llmcord_config
+            
+            # 創建 LLM 客戶端（用於複雜度評估）
+            self._create_llm_client(llmcord_config)
+            
             # 創建 agent 配置
             self._agent_config = AgentConfiguration.from_llmcord_config(llmcord_config)
             
@@ -53,6 +62,28 @@ class SmartRAGPipeline:
         except Exception as e:
             self.logger.error(f"初始化 RAG 流程失敗: {str(e)}")
             self._research_agent = None
+    
+    def _create_llm_client(self, cfg: Dict[str, Any]):
+        """
+        創建 LLM 客戶端用於複雜度評估
+        
+        Args:
+            cfg: llmcord 配置
+        """
+        try:
+            provider_slash_model = cfg.get("model", "openai/gpt-3.5-turbo")
+            provider, model = provider_slash_model.split("/", 1)
+            base_url = cfg.get("providers", {}).get(provider, {}).get("base_url", "https://api.openai.com/v1")
+            api_key = cfg.get("providers", {}).get(provider, {}).get("api_key", "sk-no-key-required")
+            
+            self._llm_client = AsyncOpenAI(base_url=base_url, api_key=api_key)
+            self._model_name = model  # 儲存模型名稱用於複雜度評估
+            self.logger.info(f"LLM 客戶端已創建: {provider}/{model}")
+            
+        except Exception as e:
+            self.logger.warning(f"創建 LLM 客戶端失敗: {str(e)}，將回退到規則型複雜度評估")
+            self._llm_client = None
+            self._model_name = None
     
     async def process_message(
         self,
@@ -80,19 +111,53 @@ class SmartRAGPipeline:
             # 檢查是否強制使用研究模式
             force_research = self._check_force_research_mode(user_content)
             
-            # 分析訊息複雜度
-            complexity_analysis = analyze_message_complexity(user_content)
+            # 使用新的 LLM 複雜度評估（優先），回退到規則評估
+            try:
+                if self._llm_client:
+                    # 使用 LLM 進行複雜度評估
+                    complexity_analysis = await assess_message_complexity_with_llm(
+                        message_content=user_content,
+                        llm_client=self._llm_client,
+                        fallback_to_rules=True,
+                        model_name=getattr(self, '_model_name', 'gpt-3.5-turbo')
+                    )
+                    
+                    self.logger.info(f"LLM 複雜度評估完成 - 決定: {complexity_analysis['final_decision']}, "
+                                   f"方法: {complexity_analysis['method']}, "
+                                   f"信心: {complexity_analysis['confidence']:.2f}")
+                else:
+                    # 回退到規則型評估
+                    rule_result = analyze_message_complexity(user_content)
+                    complexity_analysis = {
+                        "final_decision": "RESEARCH" if rule_result["use_research"] else "SIMPLE",
+                        "use_research": rule_result["use_research"],
+                        "confidence": rule_result["complexity_score"],
+                        "method": "rule_based_fallback"
+                    }
+                    
+                    self.logger.info(f"規則複雜度評估 - 複雜度: {rule_result['complexity_score']:.2f}, "
+                                   f"使用研究: {rule_result['use_research']}")
+                    
+            except Exception as e:
+                self.logger.warning(f"複雜度評估失敗，使用規則型評估: {str(e)}")
+                rule_result = analyze_message_complexity(user_content)
+                complexity_analysis = {
+                    "final_decision": "RESEARCH" if rule_result["use_research"] else "SIMPLE",
+                    "use_research": rule_result["use_research"],
+                    "confidence": rule_result["complexity_score"],
+                    "method": "rule_based_error_fallback"
+                }
             
             # 決定使用哪種模式
             use_research_mode = (
-                force_research or 
-                (self._research_agent is not None and 
-                 (complexity_analysis["use_research"] or 
+                force_research or
+                (self._research_agent is not None and
+                 (complexity_analysis["use_research"] or
                   (self._agent_config and self._agent_config.should_use_research_mode(user_content))))
             )
             
-            self.logger.info(f"訊息分析 - 複雜度: {complexity_analysis['complexity_score']:.2f}, "
-                           f"使用研究模式: {use_research_mode}")
+            self.logger.info(f"最終決定 - 使用研究模式: {use_research_mode} "
+                           f"(強制: {force_research}, 複雜度建議: {complexity_analysis['use_research']})")
             
             if use_research_mode and self._research_agent:
                 return await self._process_with_langgraph(message, user_content, message_data)

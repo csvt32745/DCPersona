@@ -10,6 +10,10 @@ from pydantic import BaseModel, Field
 import discord
 import time
 
+# Discord Embed 顏色常數（與 postprocess.py 保持一致）
+EMBED_COLOR_COMPLETE = discord.Color.dark_green()
+EMBED_COLOR_INCOMPLETE = discord.Color.orange()
+
 
 class SearchQueryList(BaseModel):
     """搜尋查詢列表結構"""
@@ -113,40 +117,62 @@ class ProgressMessageManager:
         
         # 追蹤訊息的最終答案狀態
         self._final_answers: Dict[int, str] = {}
+        
+        # 追蹤訊息的來源資訊
+        self._message_sources: Dict[int, List[Dict[str, Any]]] = {}
     
     async def send_or_update_progress(
         self,
         original_message: discord.Message,
         progress: DiscordProgressUpdate,
-        final_answer: Optional[str] = None
+        final_answer: Optional[str] = None,
+        sources: Optional[List[Dict[str, Any]]] = None
     ) -> Optional[discord.Message]:
-        """發送新的進度消息或更新現有消息，支援最終答案整合"""
+        """發送新的進度消息或更新現有消息，支援最終答案整合和 embed 格式"""
         try:
-            # 建構進度內容
-            progress_content = self._format_progress_content(progress, final_answer)
             channel_id = original_message.channel.id
             
             # 如果提供了最終答案，記錄它
             if final_answer:
                 self._final_answers[original_message.id] = final_answer
             
+            # 如果提供了來源資訊，記錄它
+            if sources:
+                self._message_sources[original_message.id] = sources
+            
             # 檢查是否已有進度消息存在
             existing_progress_msg = self._progress_messages.get(channel_id)
+            
+            # 創建 embed 或內容
+            embed_content = self._create_progress_embed(progress, final_answer, sources)
             
             if existing_progress_msg:
                 try:
                     # 嘗試編輯現有進度消息
-                    await existing_progress_msg.edit(content=progress_content)
+                    if embed_content:
+                        await existing_progress_msg.edit(content=None, embed=embed_content)
+                    else:
+                        # 回退到純文字格式
+                        content = self._format_progress_content(progress, final_answer)
+                        await existing_progress_msg.edit(content=content, embed=None)
                     return existing_progress_msg
                 except (discord.NotFound, discord.HTTPException, discord.Forbidden):
                     # 如果編輯失敗（消息被刪除、無權限等），移除記錄並發送新消息
                     self._progress_messages.pop(channel_id, None)
             
             # 發送新的進度消息
-            progress_msg = await original_message.reply(
-                content=progress_content,
-                mention_author=False
-            )
+            if embed_content:
+                progress_msg = await original_message.reply(
+                    embed=embed_content,
+                    mention_author=False
+                )
+            else:
+                # 回退到純文字格式
+                content = self._format_progress_content(progress, final_answer)
+                progress_msg = await original_message.reply(
+                    content=content,
+                    mention_author=False
+                )
             
             # 記錄新的進度消息
             self._progress_messages[channel_id] = progress_msg
@@ -159,8 +185,87 @@ class ProgressMessageManager:
             print(f"發送進度更新失敗: {e}")
             return None
     
+    def _create_progress_embed(
+        self,
+        progress: DiscordProgressUpdate,
+        final_answer: Optional[str] = None,
+        sources: Optional[List[Dict[str, Any]]] = None
+    ) -> Optional[discord.Embed]:
+        """創建統一的進度 embed 格式"""
+        try:
+            # 決定顏色
+            if progress.stage == "completed":
+                color = EMBED_COLOR_COMPLETE
+            elif progress.stage in ["error", "timeout"]:
+                color = EMBED_COLOR_INCOMPLETE
+            else:
+                color = EMBED_COLOR_INCOMPLETE  # 進行中使用橘色
+            
+            # 創建 embed
+            embed = discord.Embed(color=color)
+            
+            if progress.stage == "completed" and final_answer:
+                # 完成狀態：顯示最終答案
+                embed.description = final_answer
+                
+                # 添加來源資訊作為 field
+                if sources:
+                    sources_text = self._format_sources_for_embed(sources)
+                    if sources_text:
+                        embed.add_field(
+                            name="📚 參考來源",
+                            value=sources_text,
+                            inline=False
+                        )
+            else:
+                # 進度狀態：顯示進度訊息
+                embed.description = progress.message
+                
+                # 添加進度條（如果有）
+                if progress.progress_percentage is not None:
+                    progress_bar = self._create_progress_bar(progress.progress_percentage)
+                    embed.add_field(
+                        name="📊 進度",
+                        value=f"{progress_bar} {progress.progress_percentage}%",
+                        inline=True
+                    )
+                
+                # 添加預估時間（如果有）
+                if progress.eta_seconds is not None and progress.eta_seconds > 0:
+                    eta_text = self._format_eta(progress.eta_seconds)
+                    embed.add_field(
+                        name="⏱️ 預估剩餘時間",
+                        value=eta_text,
+                        inline=True
+                    )
+            
+            return embed
+            
+        except Exception as e:
+            print(f"創建進度 embed 失敗: {e}")
+            return None
+    
+    def _format_sources_for_embed(self, sources: List[Dict[str, Any]], max_sources: int = 3) -> str:
+        """格式化來源資訊為 embed field 格式"""
+        if not sources:
+            return ""
+        
+        formatted_sources = []
+        for i, source in enumerate(sources[:max_sources], 1):
+            title = source.get('label', source.get('title', f'來源 {i}'))
+            url = source.get('value', source.get('url', '#'))
+            # 限制標題長度以避免 embed 過長
+            if len(title) > 50:
+                title = title[:47] + "..."
+            formatted_sources.append(f"{i}. [{title}]({url})")
+        
+        if len(sources) > max_sources:
+            formatted_sources.append(f"... 還有 {len(sources) - max_sources} 個來源")
+        
+        return "\n".join(formatted_sources)
+    
     def _format_progress_content(self, progress: DiscordProgressUpdate, final_answer: Optional[str] = None) -> str:
-        """格式化進度內容，支援最終答案整合"""
+        """格式化進度內容，支援最終答案整合（回退格式）"""
         # 基本進度內容
         if progress.stage == "completed" and final_answer:
             # 如果是完成狀態且有最終答案，使用整合格式
@@ -214,6 +319,7 @@ class ProgressMessageManager:
         self._message_to_progress.pop(message_id, None)
         self._message_timestamps.pop(message_id, None)
         self._final_answers.pop(message_id, None)
+        self._message_sources.pop(message_id, None)
     
     def cleanup_all_progress_messages(self):
         """清理所有進度消息記錄"""
@@ -221,6 +327,7 @@ class ProgressMessageManager:
         self._message_to_progress.clear()
         self._message_timestamps.clear()
         self._final_answers.clear()
+        self._message_sources.clear()
     
     def cleanup_old_messages(self, max_age_seconds: int = 3600):
         """清理超過指定時間的消息追蹤記錄（預設1小時）"""
@@ -248,12 +355,15 @@ class ProgressMessageManager:
     async def update_with_final_answer(
         self,
         original_message: discord.Message,
-        final_answer: str
+        final_answer: str,
+        sources: Optional[List[Dict[str, Any]]] = None
     ) -> Optional[discord.Message]:
-        """將最終答案更新到現有的進度消息"""
+        """將最終答案更新到現有的進度消息，使用 embed 格式"""
         try:
-            # 保存最終答案
+            # 保存最終答案和來源
             self._final_answers[original_message.id] = final_answer
+            if sources:
+                self._message_sources[original_message.id] = sources
             
             # 獲取現有的進度消息
             progress_msg = self._message_to_progress.get(original_message.id)
@@ -265,11 +375,17 @@ class ProgressMessageManager:
                     progress_percentage=100
                 )
                 
-                # 格式化內容（包含最終答案）
-                final_content = self._format_progress_content(completed_progress, final_answer)
+                # 嘗試創建 embed
+                embed_content = self._create_progress_embed(completed_progress, final_answer, sources)
                 
-                # 更新消息
-                await progress_msg.edit(content=final_content)
+                if embed_content:
+                    # 使用 embed 格式更新
+                    await progress_msg.edit(content=None, embed=embed_content)
+                else:
+                    # 回退到純文字格式
+                    final_content = self._format_progress_content(completed_progress, final_answer)
+                    await progress_msg.edit(content=final_content, embed=None)
+                
                 return progress_msg
             
             return None
@@ -296,16 +412,22 @@ class DiscordTools:
         message: discord.Message,
         progress: DiscordProgressUpdate,
         edit_previous: bool = True,
-        final_answer: Optional[str] = None
+        final_answer: Optional[str] = None,
+        sources: Optional[List[Dict[str, Any]]] = None
     ) -> Optional[discord.Message]:
-        """發送或更新進度訊息，支援最終答案整合"""
+        """發送或更新進度訊息，支援最終答案整合和 embed 格式"""
         if edit_previous:
-            return await _progress_manager.send_or_update_progress(message, progress, final_answer)
+            return await _progress_manager.send_or_update_progress(message, progress, final_answer, sources)
         else:
             # 如果不需要編輯，直接發送新消息
             try:
-                progress_content = _progress_manager._format_progress_content(progress, final_answer)
-                return await message.reply(content=progress_content, mention_author=False)
+                embed_content = _progress_manager._create_progress_embed(progress, final_answer, sources)
+                if embed_content:
+                    return await message.reply(embed=embed_content, mention_author=False)
+                else:
+                    # 回退到純文字格式
+                    progress_content = _progress_manager._format_progress_content(progress, final_answer)
+                    return await message.reply(content=progress_content, mention_author=False)
             except discord.HTTPException as e:
                 print(f"發送進度更新失敗: {e}")
                 return None
@@ -336,10 +458,11 @@ class DiscordTools:
     @staticmethod
     async def update_progress_with_final_answer(
         original_message: discord.Message,
-        final_answer: str
+        final_answer: str,
+        sources: Optional[List[Dict[str, Any]]] = None
     ) -> Optional[discord.Message]:
-        """將最終答案更新到現有的進度消息"""
-        return await _progress_manager.update_with_final_answer(original_message, final_answer)
+        """將最終答案更新到現有的進度消息，使用 embed 格式"""
+        return await _progress_manager.update_with_final_answer(original_message, final_answer, sources)
     
     @staticmethod
     def set_current_original_message_id(message_id: int):
