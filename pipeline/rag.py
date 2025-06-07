@@ -220,10 +220,26 @@ class SmartRAGPipeline:
                 }
             else:
                 # 研究失敗，使用降級機制
-                self.logger.warning(f"LangGraph 研究失敗: {research_result.get('error', {}).get('error_message', 'Unknown error')}")
+                error_obj = research_result.get("error", {})
+                error_message = "Unknown error"
+                user_friendly_message = "研究過程發生錯誤"
+                try:
+                    if hasattr(error_obj, "error_message"):
+                        error_message = getattr(error_obj, "error_message", "Unknown error")
+                    elif isinstance(error_obj, dict):
+                        error_message = error_obj.get("error_message", "Unknown error")
+                    else:
+                        error_message = str(error_obj)
+                    if hasattr(error_obj, "user_friendly_message"):
+                        user_friendly_message = getattr(error_obj, "user_friendly_message", user_friendly_message)
+                    elif isinstance(error_obj, dict):
+                        user_friendly_message = error_obj.get("user_friendly_message", user_friendly_message)
+                except Exception as e:
+                    self.logger.warning(f"處理 error 結構時發生例外: {e}")
+                self.logger.warning(f"LangGraph 研究失敗: {error_message}")
                 return await self._fallback_response(
-                    message, 
-                    research_result.get("error", {}).get("user_friendly_message", "研究過程發生錯誤")
+                    message,
+                    user_friendly_message
                 )
                 
         except Exception as e:
