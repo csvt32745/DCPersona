@@ -110,6 +110,7 @@ class ResearchProgress:
     total_queries: int = 0  # 總查詢數
     loop_count: int = 0  # 循環計數
     sources_found: int = 0  # 找到的來源數
+    final_answer: Optional[str] = None  # 最終答案
     
     def get_progress_message(self) -> str:
         """獲取進度訊息"""

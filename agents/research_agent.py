@@ -440,15 +440,29 @@ class ResearchAgent:
             # 清理和截斷文字以適應 Discord
             final_content = clean_and_truncate_text(result.content)
             
-            # 更新進度
+            # 添加來源資訊到最終答案
+            if unique_sources:
+                sources_text = "\n\n**📚 參考來源：**\n"
+                for i, source in enumerate(unique_sources[:3], 1):
+                    source_title = source.get('label', source.get('title', '來源'))
+                    source_url = source.get('value', source.get('url', '#'))
+                    sources_text += f"{i}. [{source_title}]({source_url})\n"
+                
+                # 確保最終內容不會超過 Discord 限制
+                if len(final_content + sources_text) <= 1900:
+                    final_content += sources_text
+            
+            # 更新進度 - 將最終答案標記為完成
             session_id = state.get("session_id")
             if session_id and session_id in self.current_progress:
                 progress = self.current_progress[session_id]
-                progress.stage = "finalize_answer"
+                progress.stage = "completed"
+                progress.final_answer = final_content  # 保存最終答案到進度對象
             
             return {
                 "messages": [AIMessage(content=final_content)],
                 "sources_gathered": unique_sources,
+                "final_answer": final_content,  # 添加最終答案到返回結果
             }
             
         except Exception as e:
@@ -456,9 +470,17 @@ class ResearchAgent:
             # 提供降級回應
             fallback_response = "抱歉，在整理最終答案時遇到了問題 😅 不過根據我的研究，我找到了一些相關資訊..."
             
+            # 更新進度為錯誤狀態
+            session_id = state.get("session_id")
+            if session_id and session_id in self.current_progress:
+                progress = self.current_progress[session_id]
+                progress.stage = "error"
+                progress.final_answer = fallback_response
+            
             return {
                 "messages": [AIMessage(content=fallback_response)],
                 "sources_gathered": state.get("sources_gathered", []),
+                "final_answer": fallback_response,
             }
     
     def _create_error_result(self, error_type: str, message: str) -> Dict[str, Any]:
@@ -478,6 +500,9 @@ class ResearchAgent:
     async def create_progress_callback(self, message: discord.Message):
         """創建進度回調函式"""
         channel_id = message.channel.id
+        
+        # 設置當前處理的原始消息ID
+        DiscordTools.set_current_original_message_id(message.id)
         
         async def progress_callback(progress: ResearchProgress):
             try:
@@ -521,15 +546,25 @@ class ResearchAgent:
                 from .tools_and_schemas import DiscordProgressUpdate
                 discord_progress = DiscordProgressUpdate(**progress_update)
                 
+                # 檢查是否有最終答案需要整合
+                final_answer = getattr(progress, 'final_answer', None)
+                
                 # 發送或更新進度消息
-                progress_msg = await DiscordTools.send_progress_update(
-                    message, discord_progress, edit_previous=True
-                )
+                if stage == "completed" and final_answer:
+                    # 如果是完成狀態且有最終答案，使用整合功能
+                    progress_msg = await DiscordTools.send_progress_update(
+                        message, discord_progress, edit_previous=True, final_answer=final_answer
+                    )
+                else:
+                    # 正常的進度更新
+                    progress_msg = await DiscordTools.send_progress_update(
+                        message, discord_progress, edit_previous=True
+                    )
                 
                 # 如果研究完成或出錯，安排清理任務
                 if stage in ["completed", "error", "timeout"]:
                     # 延遲清理，給用戶時間看到最終狀態
-                    asyncio.create_task(self._delayed_cleanup(channel_id, delay=10))
+                    asyncio.create_task(self._delayed_cleanup(channel_id, delay=30))  # 增加延遲時間
                 
             except Exception as e:
                 self.logger.error(f"發送進度更新失敗: {str(e)}", exc_info=True)

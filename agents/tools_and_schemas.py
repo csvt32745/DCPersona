@@ -110,17 +110,25 @@ class ProgressMessageManager:
         
         # 記錄消息創建時間，用於清理機制
         self._message_timestamps: Dict[int, float] = {}
+        
+        # 追蹤訊息的最終答案狀態
+        self._final_answers: Dict[int, str] = {}
     
     async def send_or_update_progress(
         self,
         original_message: discord.Message,
-        progress: DiscordProgressUpdate
+        progress: DiscordProgressUpdate,
+        final_answer: Optional[str] = None
     ) -> Optional[discord.Message]:
-        """發送新的進度消息或更新現有消息"""
+        """發送新的進度消息或更新現有消息，支援最終答案整合"""
         try:
             # 建構進度內容
-            progress_content = self._format_progress_content(progress)
+            progress_content = self._format_progress_content(progress, final_answer)
             channel_id = original_message.channel.id
+            
+            # 如果提供了最終答案，記錄它
+            if final_answer:
+                self._final_answers[original_message.id] = final_answer
             
             # 檢查是否已有進度消息存在
             existing_progress_msg = self._progress_messages.get(channel_id)
@@ -151,18 +159,30 @@ class ProgressMessageManager:
             print(f"發送進度更新失敗: {e}")
             return None
     
-    def _format_progress_content(self, progress: DiscordProgressUpdate) -> str:
-        """格式化進度內容"""
-        content = f"**{progress.stage}**\n{progress.message}"
+    def _format_progress_content(self, progress: DiscordProgressUpdate, final_answer: Optional[str] = None) -> str:
+        """格式化進度內容，支援最終答案整合"""
+        # 基本進度內容
+        if progress.stage == "completed" and final_answer:
+            # 如果是完成狀態且有最終答案，使用整合格式
+            content = f"{final_answer}"
+        else:
+            # 正常進度格式
+            content = f"{progress.message}"
+            
+            if progress.progress_percentage is not None:
+                # 創建進度條視覺效果
+                progress_bar = self._create_progress_bar(progress.progress_percentage)
+                content += f"\n{progress_bar} {progress.progress_percentage}%"
+            
+            if progress.eta_seconds is not None and progress.eta_seconds > 0:
+                eta_text = self._format_eta(progress.eta_seconds)
+                content += f"\n⏱️ 預估剩餘時間: {eta_text}"
         
-        if progress.progress_percentage is not None:
-            # 創建進度條視覺效果
-            progress_bar = self._create_progress_bar(progress.progress_percentage)
-            content += f"\n{progress_bar} {progress.progress_percentage}%"
-        
-        if progress.eta_seconds is not None and progress.eta_seconds > 0:
-            eta_text = self._format_eta(progress.eta_seconds)
-            content += f"\n⏱️ 預估剩餘時間: {eta_text}"
+        # 如果有保存的最終答案且當前不是完成狀態，也要顯示它
+        if not (progress.stage == "completed" and final_answer) and hasattr(self, '_current_original_msg_id'):
+            stored_answer = self._final_answers.get(self._current_original_msg_id)
+            if stored_answer:
+                content += f"\n\n**🎯 研究結果：**\n{stored_answer}"
         
         return content
     
@@ -193,12 +213,14 @@ class ProgressMessageManager:
         """清理指定消息的追蹤記錄"""
         self._message_to_progress.pop(message_id, None)
         self._message_timestamps.pop(message_id, None)
+        self._final_answers.pop(message_id, None)
     
     def cleanup_all_progress_messages(self):
         """清理所有進度消息記錄"""
         self._progress_messages.clear()
         self._message_to_progress.clear()
         self._message_timestamps.clear()
+        self._final_answers.clear()
     
     def cleanup_old_messages(self, max_age_seconds: int = 3600):
         """清理超過指定時間的消息追蹤記錄（預設1小時）"""
@@ -222,6 +244,43 @@ class ProgressMessageManager:
     def get_progress_message_by_original_id(self, original_message_id: int) -> Optional[discord.Message]:
         """根據原始消息ID獲取進度消息"""
         return self._message_to_progress.get(original_message_id)
+    
+    async def update_with_final_answer(
+        self,
+        original_message: discord.Message,
+        final_answer: str
+    ) -> Optional[discord.Message]:
+        """將最終答案更新到現有的進度消息"""
+        try:
+            # 保存最終答案
+            self._final_answers[original_message.id] = final_answer
+            
+            # 獲取現有的進度消息
+            progress_msg = self._message_to_progress.get(original_message.id)
+            if progress_msg:
+                # 創建完成狀態的進度更新
+                completed_progress = DiscordProgressUpdate(
+                    stage="completed",
+                    message="研究已完成",
+                    progress_percentage=100
+                )
+                
+                # 格式化內容（包含最終答案）
+                final_content = self._format_progress_content(completed_progress, final_answer)
+                
+                # 更新消息
+                await progress_msg.edit(content=final_content)
+                return progress_msg
+            
+            return None
+            
+        except Exception as e:
+            print(f"更新最終答案失敗: {e}")
+            return None
+    
+    def set_current_original_message_id(self, message_id: int):
+        """設置當前處理的原始消息ID（用於格式化時獲取最終答案）"""
+        self._current_original_msg_id = message_id
 
 
 # 全域進度消息管理器實例
@@ -236,15 +295,16 @@ class DiscordTools:
     async def send_progress_update(
         message: discord.Message,
         progress: DiscordProgressUpdate,
-        edit_previous: bool = True
+        edit_previous: bool = True,
+        final_answer: Optional[str] = None
     ) -> Optional[discord.Message]:
-        """發送或更新進度訊息"""
+        """發送或更新進度訊息，支援最終答案整合"""
         if edit_previous:
-            return await _progress_manager.send_or_update_progress(message, progress)
+            return await _progress_manager.send_or_update_progress(message, progress, final_answer)
         else:
             # 如果不需要編輯，直接發送新消息
             try:
-                progress_content = _progress_manager._format_progress_content(progress)
+                progress_content = _progress_manager._format_progress_content(progress, final_answer)
                 return await message.reply(content=progress_content, mention_author=False)
             except discord.HTTPException as e:
                 print(f"發送進度更新失敗: {e}")
@@ -272,6 +332,19 @@ class DiscordTools:
     def get_progress_message_by_original_id(original_message_id: int) -> Optional[discord.Message]:
         """根據原始消息ID獲取進度消息"""
         return _progress_manager.get_progress_message_by_original_id(original_message_id)
+    
+    @staticmethod
+    async def update_progress_with_final_answer(
+        original_message: discord.Message,
+        final_answer: str
+    ) -> Optional[discord.Message]:
+        """將最終答案更新到現有的進度消息"""
+        return await _progress_manager.update_with_final_answer(original_message, final_answer)
+    
+    @staticmethod
+    def set_current_original_message_id(message_id: int):
+        """設置當前處理的原始消息ID"""
+        _progress_manager.set_current_original_message_id(message_id)
     
     @staticmethod
     def get_progress_manager_stats() -> Dict[str, Any]:

@@ -161,20 +161,8 @@ async def on_message(new_msg: discord.Message):
             # 如果智能 RAG 產生了增強內容，整合到系統提示中
             if rag_result.get("augmented_content"):
                 if rag_result.get("research_mode", False):
-                    # 研究模式：直接使用 LangGraph 的結果
-                    final_content = rag_result["augmented_content"]
-                    
-                    # 如果有來源，添加來源資訊
-                    if rag_result.get("sources"):
-                        sources_text = "\n\n**參考來源：**\n"
-                        for i, source in enumerate(rag_result["sources"][:3], 1):
-                            sources_text += f"{i}. [{source.get('label', '來源')}]({source.get('value', '#')})\n"
-                        
-                        if len(final_content + sources_text) <= 1900:  # Discord 限制
-                            final_content += sources_text
-                    
-                    # 直接回覆研究結果
-                    await new_msg.reply(content=final_content, suppress_embeds=True)
+                    # 研究模式：LangGraph 已經通過進度訊息處理了最終答案
+                    # 這裡不需要再發送額外的回覆，因為最終答案已經整合到進度訊息中
                     return
                 else:
                     # 傳統模式：將增強內容加入系統提示
