@@ -119,14 +119,14 @@ class ResearchProgress:
         safe_stage = self.stage if self.stage else "processing"
         
         stage_messages = {
-            "generate_query": "🤔 正在分析問題並生成搜尋策略...",
-            "web_research": f"🔍 正在進行網路研究 ({self.completed_queries}/{self.total_queries})",
-            "reflection": f"💭 正在分析結果並評估資訊完整性... (循環 {self.loop_count})",
-            "finalize_answer": f"📝 正在整理最終答案... (已收集 {self.sources_found} 個來源)",
-            "completed": "✅ 研究完成！",
-            "error": "❌ 研究過程中發生錯誤",
-            "timeout": "⏰ 研究超時，正在提供可用結果...",
-            "processing": "🔄 正在處理..."
+            "generate_query": "🤔 讓我想想",
+            "web_research": f"🔍 找資料中 ({self.completed_queries}/{self.total_queries})",
+            "reflection": f"💭 檢查資訊（{self.loop_count}）",
+            "finalize_answer": f"📝 整理答案（{self.sources_found}）",
+            "completed": "✅ 完成啦！",
+            "error": "❌ 出錯了 QQ",
+            "timeout": "⏰ 查太久了，先給你結果！",
+            "processing": "🔄 處理中..."
         }
         
         # 獲取訊息，如果沒有對應的訊息則使用預設訊息

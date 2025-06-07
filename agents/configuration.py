@@ -130,11 +130,17 @@ class AgentConfiguration(BaseModel):
 
         # LangGraph 特定配置
         langgraph_config = llmcord_cfg.get("langgraph", {})
+        models_config = langgraph_config.get("models", {})
+
+        # 使用 langgraph.models 配置優先，否則 fallback 到主 model
+        query_generator_model = models_config.get("query_generator", model_name)
+        reflection_model = models_config.get("reflection", model_name)
+        answer_model = models_config.get("answer", model_name)
         
         return cls(
-            query_generator_model=model_name,
-            reflection_model=model_name,
-            answer_model=model_name,
+            query_generator_model=query_generator_model,
+            reflection_model=reflection_model,
+            answer_model=answer_model,
             number_of_initial_queries=langgraph_config.get("initial_queries", 2),
             max_research_loops=langgraph_config.get("max_loops", 1),
             progress_updates_enabled=langgraph_config.get("progress_updates", True),
