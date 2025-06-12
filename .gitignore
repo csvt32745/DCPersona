@@ -1,38 +1,8 @@
 # This gitignore is a whitelist. Inspired by https://rgbcu.be/blog/gitignore
 
-*
-# Allow directories
-!assets/
-!tests/
-!agents/
-!agents/**
-!core/
-!core/**
-!discordbot/
-!discordbot/**
-!persona/
-!persona/**
-!pipeline/
-!pipeline/**
-!tools/
-!tools/**
-!server/
-!server/**
-
-# Allow specific file types
-!.gitignore
-!*.md
-!*.py
-!*.yaml
-!*.yml
-
-# Allow specific files
-!Dockerfile
-!config-example.yaml
-!docker-compose.yaml
-!requirements.txt
 
 # Re-ignore __pycache__ directories and .pyc files
+.env
 __pycache__/
 *.pyc
 config.yaml

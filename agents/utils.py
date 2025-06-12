@@ -14,30 +14,6 @@ import discord
 import re
 
 
-def get_research_topic(messages: List[AnyMessage]) -> str:
-    """
-    從訊息列表中提取研究主題
-    
-    Args:
-        messages: LangChain 訊息列表
-        
-    Returns:
-        str: 研究主題字串
-    """
-    # 檢查是否有歷史對話，將訊息合併為單一字串
-    if len(messages) == 1:
-        research_topic = messages[-1].content
-    else:
-        research_topic = ""
-        for message in messages:
-            if isinstance(message, HumanMessage):
-                research_topic += f"使用者: {message.content}\n"
-            elif isinstance(message, AIMessage):
-                research_topic += f"初華: {message.content}\n"
-    
-    return research_topic
-
-
 def resolve_urls(urls_to_resolve: List[Any], id: int) -> Dict[str, str]:
     """
     將長 URL 對應到短 URL，確保每個原始 URL 獲得一致的短網址形式，同時保持唯一性
@@ -51,6 +27,10 @@ def resolve_urls(urls_to_resolve: List[Any], id: int) -> Dict[str, str]:
     """
     prefix = f"https://research.hatsuhana.moe/ref/"
     
+    # 如果列表為空，直接返回空字典
+    if not urls_to_resolve:
+        return {}
+
     # 處理不同的 URL 結構
     if hasattr(urls_to_resolve[0], 'web'):
         urls = [site.web.uri for site in urls_to_resolve]
@@ -118,12 +98,20 @@ def get_citations(response: Any, resolved_urls_map: Dict[str, str]) -> List[Dict
         return citations
 
     candidate = response.candidates[0]
+    if candidate is None:
+        return citations
+
     if (
         not hasattr(candidate, "grounding_metadata")
         or not candidate.grounding_metadata
         or not hasattr(candidate.grounding_metadata, "grounding_supports")
     ):
         return citations
+
+    # Safely get grounding_chunks from the candidate
+    candidate_grounding_chunks = []
+    if hasattr(candidate.grounding_metadata, 'grounding_chunks') and candidate.grounding_metadata.grounding_chunks is not None:
+        candidate_grounding_chunks = candidate.grounding_metadata.grounding_chunks
 
     for support in candidate.grounding_metadata.grounding_supports:
         citation = {}
@@ -148,20 +136,23 @@ def get_citations(response: Any, resolved_urls_map: Dict[str, str]) -> List[Dict
         citation["segments"] = []
         if (
             hasattr(support, "grounding_chunk_indices")
-            and support.grounding_chunk_indices
+            and support.grounding_chunk_indices is not None
         ):
             for ind in support.grounding_chunk_indices:
                 try:
-                    chunk = candidate.grounding_metadata.grounding_chunks[ind]
-                    resolved_url = resolved_urls_map.get(chunk.web.uri, None)
-                    citation["segments"].append(
-                        {
-                            "label": chunk.web.title.split(".")[:-1][0] if chunk.web.title else "來源",
-                            "short_url": resolved_url,
-                            "value": chunk.web.uri,
-                        }
-                    )
-                except (IndexError, AttributeError, NameError):
+                    # Add a bounds check here as well to prevent IndexError
+                    if ind < len(candidate_grounding_chunks):
+                        chunk = candidate_grounding_chunks[ind]
+                        if chunk and hasattr(chunk, 'web') and chunk.web:
+                            resolved_url = resolved_urls_map.get(chunk.web.uri, None)
+                            citation["segments"].append(
+                                {
+                                    "label": chunk.web.title.split(".")[:-1][0] if chunk.web and chunk.web.title and isinstance(chunk.web.title, str) and chunk.web.title.strip() else "來源",
+                                    "short_url": resolved_url,
+                                    "value": chunk.web.uri,
+                                }
+                            )
+                except (AttributeError, NameError):
                     # 處理 chunk、web、uri 或 resolved_map 可能有問題的情況
                     # 為了簡單起見，我們只是跳過添加這個特定的段落連結
                     pass

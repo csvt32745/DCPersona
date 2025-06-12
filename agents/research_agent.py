@@ -47,7 +47,6 @@ from .tools_and_schemas import (
 )
 from .utils import (
     get_citations,
-    get_research_topic,
     insert_citation_markers,
     resolve_urls,
     clean_and_truncate_text,
