@@ -95,6 +95,62 @@ class PromptSystem:
             self.logger.error(f"載入特定 persona {persona_name} 時出錯: {e}")
             return ""
     
+    def get_system_instructions(
+        self,
+        cfg: Dict[str, Any],
+        available_tools: List[str],
+        discord_context: Optional[Dict[str, Any]] = None
+    ) -> str:
+        """
+        獲取完整的系統指令，包括 persona、工具說明、時間戳等
+        
+        Args:
+            cfg: 配置資料
+            available_tools: 可用的工具列表
+            discord_context: Discord 上下文資訊（可選）
+        
+        Returns:
+            str: 完整的系統指令
+        """
+        prompt_parts = []
+
+        # 1. 基礎系統提示詞
+        base_prompt = cfg.get("system_prompt", "")
+        if base_prompt:
+            prompt_parts.append(base_prompt.strip())
+
+        # 2. Random persona（如果啟用）
+        if cfg.get("is_random_system_prompt", False):
+            persona_prompt = self.random_system_prompt()
+            if persona_prompt:
+                prompt_parts.append(persona_prompt.strip())
+
+        # 3. 特定 persona 檔案（如果指定）
+        system_prompt_file = cfg.get("system_prompt_file")
+        if system_prompt_file:
+            specific_persona = self.get_specific_persona(
+                Path(system_prompt_file).stem
+            )
+            if specific_persona:
+                prompt_parts.append(specific_persona.strip())
+
+        # 4. Discord 特定資訊
+        discord_info = self._build_discord_context(cfg, discord_context)
+        if discord_info:
+            prompt_parts.append(discord_info)
+
+        # 5. 時間戳資訊
+        timestamp_info = self._build_timestamp_info(cfg)
+        if timestamp_info:
+            prompt_parts.append(timestamp_info)
+
+        # 6. 工具描述
+        tool_descriptions = self.generate_tool_descriptions(available_tools)
+        if tool_descriptions:
+            prompt_parts.append(tool_descriptions)
+
+        return "\n\n".join(prompt_parts)
+
     def build_system_prompt(
         self,
         cfg: Dict[str, Any],
@@ -110,39 +166,10 @@ class PromptSystem:
         Returns:
             str: 完整的系統提示詞
         """
-        prompt_parts = []
-        
-        # 1. 基礎系統提示詞
-        base_prompt = cfg.get("system_prompt", "")
-        if base_prompt:
-            prompt_parts.append(base_prompt.strip())
-        
-        # 2. Random persona（如果啟用）
-        if cfg.get("is_random_system_prompt", False):
-            persona_prompt = self.random_system_prompt()
-            if persona_prompt:
-                prompt_parts.append(persona_prompt.strip())
-        
-        # 3. 特定 persona 檔案（如果指定）
-        system_prompt_file = cfg.get("system_prompt_file")
-        if system_prompt_file:
-            specific_persona = self.get_specific_persona(
-                Path(system_prompt_file).stem
-            )
-            if specific_persona:
-                prompt_parts.append(specific_persona.strip())
-        
-        # 4. Discord 特定資訊
-        discord_info = self._build_discord_context(cfg, discord_context)
-        if discord_info:
-            prompt_parts.append(discord_info)
-        
-        # 5. 時間戳資訊
-        timestamp_info = self._build_timestamp_info(cfg)
-        if timestamp_info:
-            prompt_parts.append(timestamp_info)
-        
-        return "\n\n".join(prompt_parts)
+        # 直接呼叫 get_system_instructions，但在此函數中沒有 available_tools
+        # 為了保持原函數簽名，傳遞空列表或根據需求調整
+        # 注意：如果此函數仍然被 LangGraph 以外的部分調用且需要工具，需要修改調用方
+        return self.get_system_instructions(cfg, [], discord_context)
     
     def _build_discord_context(
         self,
@@ -207,8 +234,7 @@ class PromptSystem:
             return ""
         
         tool_descriptions = {
-            "google_search": "我可以進行網路搜索來獲取最新資訊",
-            "citation": "我可以提供來源引用和參考資料",
+            "google_search": "我可以提供網路搜尋結果",
             "web_research": "我可以進行深度網路研究和分析"
         }
         
@@ -275,23 +301,14 @@ def build_system_prompt(
 # ===== Agent 搜尋相關提示詞 =====
 
 def get_current_date(timezone_str: str = DEFAULT_TIMEZONE) -> str:
-    """獲取當前日期時間字串
-    
-    Args:
-        timezone_str: 時區字串
-        
-    Returns:
-        str: 格式化的日期時間字串
-    """
+    """獲取當前日期字串"""
     try:
         tz = pytz.timezone(timezone_str)
-        now = datetime.now(tz)
-        return now.strftime("%Y年%m月%d日 %H:%M")
-    except Exception:
-        # 如果時區無效，使用預設時區
-        tz = pytz.timezone(DEFAULT_TIMEZONE)
-        now = datetime.now(tz)
-        return now.strftime("%Y年%m月%d日 %H:%M")
+        current_time = datetime.now(tz)
+        return current_time.strftime('%Y-%m-%d')
+    except Exception as e:
+        logging.getLogger(__name__).warning(f"獲取當前日期時出錯: {e}")
+        return datetime.now().strftime('%Y-%m-%d')
 
 
 def load_persona_files(persona_dir: str = "persona") -> Dict[str, str]:
@@ -459,3 +476,8 @@ web_searcher_instructions = """作為一個網路搜尋專家，你的目標是�
 - 承認不確定性
 - 提供有用的後續建議
 """ 
+
+# This function was incorrectly added and should be removed.
+# def _get_system_message_for_planning_agent(self, current_date: str) -> str:
+#     # ... existing code ...
+#     return "" 

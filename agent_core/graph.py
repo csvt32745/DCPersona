@@ -18,10 +18,9 @@ from langgraph.types import Send
 from langchain_core.runnables import RunnableConfig
 from google.genai import Client
 
-from schemas.agent_types import OverallState, MsgNode
+from schemas.agent_types import OverallState, MsgNode, ToolPlan, AgentPlan, ToolExecutionState
 from utils.config_loader import load_typed_config
 from prompt_system.prompts import web_searcher_instructions, get_current_date
-from .agent_utils import resolve_urls, get_citations, insert_citation_markers
 from .progress_mixin import ProgressMixin
 from schemas.config_types import AppConfig
 
@@ -89,197 +88,361 @@ class UnifiedAgent(ProgressMixin):
         return llm_instances
     
     def build_graph(self) -> StateGraph:
-        """建立並編譯 LangGraph"""
+        """建立簡化的 LangGraph"""
         builder = StateGraph(OverallState)
         
-        # 添加所有節點
+        # 核心節點
         builder.add_node("generate_query_or_plan", self.generate_query_or_plan)
-        builder.add_node("tool_selection", self.tool_selection)
-        builder.add_node("execute_tool", self.execute_tool)
+        builder.add_node("execute_single_tool", self.execute_single_tool)
         builder.add_node("reflection", self.reflection)
-        builder.add_node("evaluate_research", self.evaluate_research)
         builder.add_node("finalize_answer", self.finalize_answer)
         
-        # 設置流程邊緣
+        # 流程設置
         builder.add_edge(START, "generate_query_or_plan")
         
-        # 根據配置決定流程 - 使用型別安全存取
-        max_tool_rounds = self.behavior_config.max_tool_rounds
+        # 條件路由：根據計劃決定下一步
+        builder.add_conditional_edges(
+            "generate_query_or_plan",
+            self.route_and_dispatch_tools,
+            {
+                "execute_tools": "execute_single_tool",
+                "direct_answer": "finalize_answer"
+            }
+        )
         
-        if max_tool_rounds == 0:
-            # 純對話模式：直接到最終答案
-            builder.add_edge("generate_query_or_plan", "finalize_answer")
-        else:
-            # 工具模式：完整流程
-            builder.add_edge("generate_query_or_plan", "tool_selection")
-            builder.add_edge("tool_selection", "execute_tool")
-            builder.add_edge("execute_tool", "reflection")
-            
-            builder.add_conditional_edges(
-                "reflection",
-                self.decide_next_step,
-                {
-                    "continue": "tool_selection",
-                    "finish": "finalize_answer"
-                }
-            )
+        # Connect dispatch node to reflection
+        builder.add_edge("execute_single_tool", "reflection")
+        
+        # 反思後的路由決策
+        builder.add_conditional_edges(
+            "reflection",
+            self.decide_next_step,
+            {
+                "continue": "generate_query_or_plan",  # 重新規劃下一輪
+                "finish": "finalize_answer"
+            }
+        )
         
         builder.add_edge("finalize_answer", END)
-        
         return builder.compile()
-    
+
+    def route_after_planning(self, state: OverallState) -> str:
+        """規劃後的路由決策"""
+        agent_plan = state.agent_plan
+        if agent_plan and agent_plan.needs_tools and agent_plan.tool_plans:
+            return "use_tools"
+        else:
+            return "direct_answer"
+
     async def generate_query_or_plan(self, state: OverallState) -> Dict[str, Any]:
         """
-        LangGraph 節點：生成查詢或初步規劃
+        統一的計劃生成節點：同時決定工具使用和生成查詢
         
-        分析用戶請求並決定是否需要使用工具，生成初步的行動計劃。
+        參考 Gemini 實作，使用 structured output 一次性決定：
+        1. 是否需要使用工具
+        2. 需要使用哪些工具
+        3. 每個工具的具體查詢參數
         """
         try:
-            self.logger.info("generate_query_or_plan: 開始分析用戶請求")
+            self.logger.info("generate_query_or_plan: 開始生成執行計劃")
             
             # 通知開始階段
             await self._notify_progress(
                 stage="generate_query", 
-                message="🤔 正在分析您的問題..."
+                message="🤔 正在分析您的問題並制定搜尋計劃..."
             )
             
             user_content = state.messages[-1].content
             max_tool_rounds = self.behavior_config.max_tool_rounds
             
-            # 決定是否需要工具
-            needs_tools = False
-            if max_tool_rounds > 0:
-                needs_tools = self._analyze_tool_necessity(state.messages)
+            if max_tool_rounds == 0:
+                # 純對話模式
+                return {
+                    "agent_plan": AgentPlan(needs_tools=False),
+                    "tool_round": 0
+                }
             
-            # 生成查詢或計劃
-            queries = []
-            if needs_tools and self.google_client:
-                queries = self._generate_search_queries(state.messages)
+            # 使用 structured LLM 生成完整計劃
+            if not self.tool_analysis_llm:
+                # 回退到簡單邏輯
+                needs_tools = self._analyze_tool_necessity_fallback(state.messages)
+                queries = [user_content] if needs_tools else []
+                tool_plans = []
+                if needs_tools and self.google_client:
+                    tool_plans = [ToolPlan(tool_name="google_search", queries=queries)]
+                
+                agent_plan = AgentPlan(
+                    needs_tools=needs_tools,
+                    tool_plans=tool_plans,
+                    reasoning="使用簡化邏輯決策"
+                )
+            else:
+                # 使用 structured output 生成計劃
+                agent_plan = await self._generate_structured_plan(state.messages)
             
-            self.logger.info(f"generate_query_or_plan: 需要工具={needs_tools}, 查詢數量={len(queries)}")
+            self.logger.info(f"生成計劃: 需要工具={agent_plan.needs_tools}, 工具數量={len(agent_plan.tool_plans)}")
             
             return {
+                "agent_plan": agent_plan,
                 "tool_round": 0,
-                "needs_tools": needs_tools,
-                "search_queries": queries,
-                "research_topic": user_content[:200],  # 截取前200字符作為研究主題
+                "research_topic": user_content
             }
             
         except Exception as e:
             self.logger.error(f"generate_query_or_plan 失敗: {e}")
-            await self._notify_progress(
-                stage="error",
-                message="❌ 分析問題時發生錯誤",
-                progress_percentage=0
-            )
-            return {"finished": True}
-    
-    def tool_selection(self, state: OverallState) -> Dict[str, Any]:
-        """
-        LangGraph 節點：工具選擇
-        
-        根據當前狀態和配置決定使用哪些工具。
-        """
+            return {
+                "agent_plan": AgentPlan(needs_tools=False),
+                "finished": True
+            }
+
+    async def _generate_structured_plan(self, messages: List[MsgNode]) -> AgentPlan:
+        """使用 structured output 生成執行計劃"""
         try:
-            self.logger.info("tool_selection: 選擇適當的工具")
+            # 構建計劃生成提示詞
+            plan_prompt = self._build_planning_prompt(messages)
             
-            available_tools = []
+            # 由於 LangChain 的 structured output 可能不支援複雜的嵌套結構，
+            # 我們先用普通 LLM 生成 JSON，然後手動解析
+            response = await asyncio.to_thread(self.tool_analysis_llm.invoke, plan_prompt)
             
-            # 根據優先級排序工具 - 使用型別安全存取
-            tools_by_priority = sorted(
-                self.tools_config.items(),
-                key=lambda x: x[1].priority
+            # 解析 JSON 回應
+            plan_data = self._parse_plan_response(response.content)
+            
+            # 構建 AgentPlan
+            tool_plans = []
+            if plan_data.get("needs_tools", False):
+                for tool_data in plan_data.get("tool_plans", []):
+                    tool_plan = ToolPlan(
+                        tool_name=tool_data.get("tool_name", "google_search"),
+                        queries=tool_data.get("queries", []),
+                        priority=tool_data.get("priority", 1)
+                    )
+                    tool_plans.append(tool_plan)
+            
+            return AgentPlan(
+                needs_tools=plan_data.get("needs_tools", False),
+                tool_plans=tool_plans,
+                reasoning=plan_data.get("reasoning", "")
             )
             
-            for tool_name, tool_config in tools_by_priority:
-                if tool_config.enabled:
-                    # 檢查工具是否真的可用
-                    if tool_name == "google_search" and self.google_client:
-                        available_tools.append(tool_name)
-                    elif tool_name != "google_search":
-                        available_tools.append(tool_name)
+        except Exception as e:
+            self.logger.warning(f"structured plan 生成失敗，回退到簡化邏輯: {e}")
+            # 回退邏輯
+            needs_tools = self._analyze_tool_necessity_fallback(messages)
+            queries = [messages[-1].content[:100]] if needs_tools else []
+            tool_plans = []
+            if needs_tools and self.google_client:
+                tool_plans = [ToolPlan(tool_name="google_search", queries=queries)]
             
-            # 決定使用的工具
-            selected_tool = None
-            if state.needs_tools and available_tools:
-                # 簡單策略：選擇第一個可用的工具
-                selected_tool = available_tools[0]
+            return AgentPlan(
+                needs_tools=needs_tools,
+                tool_plans=tool_plans,
+                reasoning="回退到簡化邏輯"
+            )
+
+    def _build_planning_prompt(self, messages: List[MsgNode]) -> List:
+        """構建計劃生成提示詞"""
+        current_date = get_current_date(self.config.system.timezone)
+        
+        system_prompt = f"""
+你是一個智能搜尋計劃生成器。根據用戶的對話歷史，決定是否需要使用工具以及具體的搜尋策略。
+
+當前日期: {current_date}
+
+可用工具:
+- google_search: 用於搜尋最新資訊、事實查證、數據查詢，queries 為搜尋關鍵字，可以輸入 1 ~ 3個
+
+判斷標準:
+- 需要最新資訊、即時數據、新聞事件
+- 需要查找特定事實、數據、統計
+- 涉及當前狀況、最新發展
+- 需要驗證或引用外部資源
+
+請以 JSON 格式回應，包含以下欄位:
+{{
+    "needs_tools": boolean,
+    "reasoning": "決策推理過程",
+    "tool_plans": [
+        {{
+            "tool_name": "google_search",
+            "queries": ["查詢1", "查詢2"],
+            "priority": 1
+        }}
+    ]
+}}
+
+如果不需要工具，tool_plans 應為空陣列。
+"""
+        
+        messages_for_llm = [SystemMessage(content=system_prompt)]
+        
+        # 添加對話歷史
+        for msg in messages:
+            if msg.role == "user":
+                messages_for_llm.append(HumanMessage(content=msg.content))
+            elif msg.role == "assistant":
+                messages_for_llm.append(AIMessage(content=msg.content))
+        
+        return messages_for_llm
+
+    def _parse_plan_response(self, response_content: str) -> Dict[str, Any]:
+        """解析計劃回應的 JSON"""
+        try:
+            # 嘗試提取 JSON
+            if "```json" in response_content:
+                start_marker = "```json"
+                end_marker = "```"
+                start_index = response_content.find(start_marker)
+                end_index = response_content.rfind(end_marker)
+                
+                if start_index != -1 and end_index != -1 and end_index > start_index:
+                    json_str = response_content[start_index + len(start_marker):end_index].strip()
+                    return json.loads(json_str)
             
-            self.logger.info(f"tool_selection: 可用工具={available_tools}, 選擇工具={selected_tool}")
+            # 嘗試直接解析
+            if response_content.strip().startswith("{"):
+                return json.loads(response_content.strip())
+            
+            # 如果都失敗，返回預設值
+            return {"needs_tools": False, "tool_plans": [], "reasoning": "JSON 解析失敗"}
+            
+        except json.JSONDecodeError as e:
+            self.logger.warning(f"JSON 解析失敗: {e}")
+            return {"needs_tools": False, "tool_plans": [], "reasoning": "JSON 解析失敗"}
+
+    def route_and_dispatch_tools(self, state: OverallState) -> Any:
+        """
+        規劃後的路由決策：
+        如果需要工具，則返回 Send 物件列表以進行並行執行；
+        否則，返回 "direct_answer" 以直接跳到最終答案。
+        """
+        agent_plan = state.agent_plan
+        
+        if agent_plan and agent_plan.needs_tools and agent_plan.tool_plans:
+            # 為每個工具計劃創建並行執行任務
+            sends = []
+            for idx, tool_plan in enumerate(agent_plan.tool_plans):
+                for query_idx, query in enumerate(tool_plan.queries):
+                    sends.append(Send(
+                        "execute_single_tool", 
+                        {
+                            "tool_name": tool_plan.tool_name,
+                            "query": query,
+                            "task_id": f"{idx}_{query_idx}",
+                            "priority": tool_plan.priority
+                        }
+                    ))
+            self.logger.info(f"route_and_dispatch_tools: 正在調度 {len(sends)} 個並行工具執行任務")
+            return sends # 返回 Send 物件列表以進行並行執行
+        else:
+            self.logger.info("route_and_dispatch_tools: 無需工具，直接回答")
+            return "direct_answer" # 返回字符串以直接路由
+
+    async def execute_single_tool(self, state: ToolExecutionState) -> Dict[str, Any]:
+        """執行單個工具任務（並行節點）"""
+        tool_name = state.get("tool_name")
+        query = state.get("query")
+        task_id = state.get("task_id")
+        
+        try:
+            self.logger.info(f"執行單個工具: {tool_name}({query})")
+            
+            if tool_name == "google_search":
+                await self._notify_progress(
+                    stage="Tool Execution",
+                    message=f"🤔 正在執行 {tool_name} 工具，查詢關鍵字: {query}",
+                    progress_percentage=50
+                )
+                result = await self._execute_google_search_single(query, task_id)
+            else:
+                await self._notify_progress(
+                    stage="Tool Execution",
+                    message=f"🤔 正在執行 {tool_name} 工具...",
+                    progress_percentage=50
+                )
+                
+                result = f"未知工具: {tool_name}"
             
             return {
-                "available_tools": available_tools,
-                "selected_tool": selected_tool
+                "tool_results": [result]
+                # "task_id": task_id,
+                # "tool_name": tool_name
             }
             
         except Exception as e:
-            self.logger.error(f"tool_selection 失敗: {e}")
-            return {"selected_tool": None}
-    
-    async def execute_tool(self, state: OverallState) -> Dict[str, Any]:
-        """
-        LangGraph 節點：執行工具
+            self.logger.error(f"工具執行失敗 {tool_name}({query}): {e}")
+            return {
+                "tool_results": [],
+                # "task_id": task_id,
+                "error": str(e)
+            }
+
+    async def _execute_google_search_single(self, query: str, task_id: str) -> str:
+        """執行單個 Google 搜尋"""
+        if not self.google_client:
+            return f"Google 客戶端未配置，無法執行搜尋: {query}"
         
-        執行選定的工具，內嵌工具邏輯如 Google Search。
-        """
         try:
-            selected_tool = state.selected_tool
+            current_date = get_current_date(timezone_str=self.config.system.timezone)
             
-            if not selected_tool:
-                self.logger.info("execute_tool: 沒有選擇工具，跳過")
-                return {
-                    "tool_results": [], 
-                    "tool_round": state.tool_round + 1
+            # 準備傳遞給 Gemini 模型的提示
+            formatted_prompt = web_searcher_instructions.format(
+                research_topic=query,
+                current_date=current_date
+            )
+            
+            model_name = self.tool_analysis_llm.model
+            # 調用 Gemini API 並啟用 google_search 工具
+            response = self.google_client.models.generate_content(
+                model=model_name,
+                contents=formatted_prompt,
+                config={
+                    "tools": [{"google_search": {}}],
+                    "temperature": 0
                 }
-            
-            self.logger.info(f"execute_tool: 執行工具 {selected_tool}")
-            
-            # 計算進度百分比
-            current_round = state.tool_round + 1
-            max_rounds = self.behavior_config.max_tool_rounds
-            progress_percentage = int((current_round / max_rounds) * 50)  # 工具執行佔總進度的50%
-            
-            # 通知工具執行進度
-            tool_names = {
-                "google_search": "Google 搜尋",
-                "citation": "引用處理"
-            }
-            tool_display_name = tool_names.get(selected_tool, selected_tool)
-            
-            await self._notify_progress(
-                stage="execute_tool",
-                message=f"🔍 正在使用 {tool_display_name} 搜尋資料... (第 {current_round}/{max_rounds} 輪)",
-                progress_percentage=progress_percentage,
-                current_round=current_round,
-                max_rounds=max_rounds,
-                tool_name=selected_tool
             )
             
-            tool_results = []
-            
-            if selected_tool == "google_search":
-                # 內嵌 Google Search 邏輯
-                tool_results = self._execute_google_search(state)
-            elif selected_tool == "citation":
-                # 內嵌引用處理邏輯
-                tool_results = self._execute_citation_tool(state)
-            
-            # 更新工具使用輪次
-            current_round = state.tool_round + 1
-            
-            self.logger.info(f"execute_tool: 完成，結果數量={len(tool_results)}, 輪次={current_round}")
-            # self.logger.info(f"execute_tool: 結果={tool_results}")
-            
-            
-            return {
-                "tool_results": tool_results,
-                "tool_round": current_round
-            }
-            
+            if response.text:
+                # 處理 grounding 和引用
+                # grounding_chunks = []
+                # resolved_urls = {}
+                
+                # # 嘗試提取 grounding_chunks
+                # if response.candidates and len(response.candidates) > 0:
+                #     candidate_0 = response.candidates[0]
+                #     if candidate_0 and hasattr(candidate_0, 'grounding_metadata') and candidate_0.grounding_metadata:
+                #         if hasattr(candidate_0.grounding_metadata, 'grounding_chunks') and candidate_0.grounding_metadata.grounding_chunks:
+                #             grounding_chunks = candidate_0.grounding_metadata.grounding_chunks
+
+                # 處理 URL 解析和引用
+                # try:
+                #     resolved_urls = resolve_urls(grounding_chunks, task_id)
+                #     return response.text
+                # except Exception as e:
+                #     self.logger.warning(f"處理引用失敗: {e}")
+                return response.text
+            else:
+                return f"針對查詢「{query}」沒有找到內容。"
+                
         except Exception as e:
-            self.logger.error(f"execute_tool 失敗: {e}")
-            return {"tool_results": [], "tool_round": state.tool_round + 1}
-    
+            self.logger.error(f"Google 搜尋失敗: {e}")
+            return f"搜尋執行失敗: {str(e)}"
+
+    def _deduplicate_results(self, results: List[str]) -> List[str]:
+        """去重和排序結果"""
+        if not results:
+            return []
+        
+        # 簡單去重
+        seen = set()
+        unique_results = []
+        for result in results:
+            if result and result not in seen:
+                seen.add(result)
+                unique_results.append(result)
+        
+        return unique_results
+
     async def reflection(self, state: OverallState) -> Dict[str, Any]:
         """
         LangGraph 節點：反思
@@ -300,29 +463,29 @@ class UnifiedAgent(ProgressMixin):
                 progress_percentage=75
             )
             
-            tool_results = state.tool_results
+            # tool_results will be accumulated from parallel execute_single_tool calls
+            raw_tool_results = state.tool_results or []
+            unique_tool_results = self._deduplicate_results(raw_tool_results) # Deduplicate here
             research_topic = state.research_topic
             
             # 使用專用的反思 LLM 或簡化邏輯
-            is_sufficient = self._evaluate_results_sufficiency(tool_results, research_topic)
+            is_sufficient = self._evaluate_results_sufficiency(unique_tool_results, research_topic)
             
             self.logger.info(f"reflection: 結果充分度={is_sufficient}")
             
             return {
                 "is_sufficient": is_sufficient,
-                "reflection_complete": True
+                "reflection_complete": True,
+                "reflection_reasoning": f"基於 {len(unique_tool_results)} 個結果的評估",
+                "aggregated_tool_results": unique_tool_results # Update for next stages
             }
             
         except Exception as e:
             self.logger.error(f"reflection 失敗: {e}")
             return {"is_sufficient": True}  # 失敗時假設充分
-    
-    def evaluate_research(self, state: OverallState) -> str:
-        """
-        LangGraph 路由節點：評估研究進度
-        
-        決定是否繼續研究或進入最終答案生成。
-        """
+
+    def decide_next_step(self, state: OverallState) -> Literal["continue", "finish"]:
+        """決定下一步的路由函數"""
         try:
             current_round = state.tool_round
             max_rounds = self.behavior_config.max_tool_rounds
@@ -330,20 +493,16 @@ class UnifiedAgent(ProgressMixin):
             
             # 決策邏輯
             if is_sufficient or current_round >= max_rounds:
-                self.logger.info(f"evaluate_research: 完成研究 (輪次={current_round}, 充分={is_sufficient})")
+                self.logger.info(f"決定完成研究 (輪次={current_round}, 充分={is_sufficient})")
                 return "finish"
             else:
-                self.logger.info(f"evaluate_research: 繼續研究 (輪次={current_round}/{max_rounds})")
+                self.logger.info(f"決定繼續研究 (輪次={current_round}/{max_rounds})")
                 return "continue"
                 
         except Exception as e:
-            self.logger.error(f"evaluate_research 失敗: {e}")
+            self.logger.error(f"decide_next_step 失敗: {e}")
             return "finish"
-    
-    def decide_next_step(self, state: OverallState) -> Literal["continue", "finish"]:
-        """決定下一步的路由函數"""
-        return self.evaluate_research(state)
-    
+
     async def finalize_answer(self, state: OverallState) -> Dict[str, Any]:
         """
         LangGraph 節點：生成最終答案
@@ -361,7 +520,7 @@ class UnifiedAgent(ProgressMixin):
             )
             
             messages = state.messages
-            tool_results = state.tool_results or []
+            tool_results = state.aggregated_tool_results or state.tool_results or []
             
             # 構建上下文
             context = ""
@@ -400,232 +559,26 @@ class UnifiedAgent(ProgressMixin):
                 "final_answer": "抱歉，生成回答時發生錯誤。", 
                 "finished": True
             }
-    
-    # 內部輔助方法
-    
-    def _analyze_tool_necessity(self, messages: List[MsgNode]) -> bool:
-        """分析是否需要使用工具（使用專用 LLM 智能判斷）"""
-        if not self.tool_analysis_llm:
-            return self._analyze_tool_necessity_fallback(messages)
-        
-        try:
-            # 構建包含所有歷史對話的提示
-            messages_for_llm = [SystemMessage(content="""
-請分析以下對話歷史，判斷最新一條用戶請求是否需要使用搜尋工具來獲取最新資訊：
 
-判斷標準：
-- 最新用戶請求需要最新資訊、即時數據、新聞事件
-- 最新用戶請求需要查找特定事實、數據、統計
-- 最新用戶請求涉及當前狀況、最新發展
-- 最新用戶請求需要驗證或引用外部資源
-- 最新用戶請求是之前問題的延伸或補充，且需要搜尋來回答。
-
-請只回答「是」或「否」，不需要解釋。
-""")]
-            
-            for msg in messages:
-                if msg.role == "user":
-                    messages_for_llm.append(HumanMessage(content=msg.content))
-                elif msg.role == "assistant":
-                    messages_for_llm.append(AIMessage(content=msg.content))
-
-            response = self.tool_analysis_llm.invoke(messages_for_llm)
-            result = response.content.strip().lower()
-            
-            needs_tools = "是" in result or "yes" in result or "需要" in result
-            
-            self.logger.info(f"LLM 工具需求判斷 (基於歷史對話): '{messages[-1].content[:50]}...' -> {needs_tools}")
-            return needs_tools
-            
-        except Exception as e:
-            self.logger.warning(f"LLM 工具需求判斷失敗，回退到關鍵字檢測: {e}")
-            return self._analyze_tool_necessity_fallback(messages)
-
+    # 保留原有的輔助方法以確保向後相容性
     def _analyze_tool_necessity_fallback(self, messages: List[MsgNode]) -> bool:
         """關鍵字檢測回退方案 (仍基於最新訊息)"""
         tool_keywords = [
             "搜尋", "查詢", "最新", "現在", "今天", "今年", "查找",
             "資訊", "資料", "新聞", "消息", "更新", "狀況", "search",
-            "find", "latest", "current", "recent", "what is", "告訴我"
+            "find", "latest", "current", "recent", "what is", "告訴我",
+            "網路搜尋", "網路研究"
         ]
         
         content_lower = messages[-1].content.lower()
         return any(keyword in content_lower for keyword in tool_keywords)
-    
-    def _generate_search_queries(self, messages: List[MsgNode]) -> List[str]:
-        """生成搜尋查詢（基於完整對話歷史）"""
-        try:
-            self.logger.info("生成搜尋查詢（基於完整對話歷史）")
-            
-            # System instruction for the LLM
-            system_instruction = f"""
-            今日是 {get_current_date(self.config.system.timezone)}
-                你是一個網路搜尋查詢生成器。
-                你的任務是根據提供的對話歷史和最新一條用戶請求，生成 1-2 個精確的網路搜尋查詢。
-                請確保查詢能涵蓋用戶請求的最新資訊需求。
 
-                輸出格式：
-                請直接提供 JSON 格式的搜尋查詢列表。如果沒有需要搜尋的查詢，請回傳一個空的 JSON 列表 `[]`。
-
-                範例：
-                [ "查詢一", "查詢二" ]
-                或者，如果不需要查詢：
-                []
-                """
-            
-            messages_for_llm = [SystemMessage(content=system_instruction)]
-
-            # Add conversation history as individual messages
-            # Iterate in chronological order as LLM expects messages in order
-            for msg in messages:
-                print(msg.role, msg.content[:100])
-                if msg.role == "user":
-                    messages_for_llm.append(HumanMessage(content=msg.content))
-                elif msg.role == "assistant":
-                    messages_for_llm.append(AIMessage(content=msg.content))
-            
-            response = self.tool_analysis_llm.invoke(messages_for_llm)
-            raw_content = response.content.strip()
-            
-            parsed_json = None
-            if "```json" in raw_content:
-                # Try to extract JSON from markdown code block
-                start_marker = "```json"
-                end_marker = "```"
-                start_index = raw_content.find(start_marker)
-                end_index = raw_content.rfind(end_marker)
-
-                if start_index != -1 and end_index != -1 and end_index > start_index:
-                    json_str = raw_content[start_index + len(start_marker):end_index].strip()
-                    try:
-                        if json_str:
-                            parsed_json = json.loads(json_str)
-                        else:
-                            parsed_json = []
-                    except json.JSONDecodeError:
-                        self.logger.warning(f"無法解析 Markdown 中的 JSON。回應: {raw_content}")
-            
-            if parsed_json is None and raw_content.startswith("["):
-                # Try to parse as direct JSON array
-                try:
-                    parsed_json = json.loads(raw_content)
-                except json.JSONDecodeError:
-                    self.logger.warning(f"無法解析為 JSON 列表。回應: {raw_content}")
-
-            if parsed_json is None or not isinstance(parsed_json, list):
-                self.logger.warning(f"LLM 生成的搜尋查詢內容為空或格式不正確，回退到簡化模式。回應: {raw_content}")
-                return [messages[-1].content[:100]]
-            
-            queries = parsed_json
-
-            self.logger.info(f"LLM 生成搜尋查詢: {queries}")
-            return queries
-            
-        except Exception as e:
-            self.logger.warning(f"LLM 生成搜尋查詢失敗，回退到簡化模式: {e}")
-            return [messages[-1].content[:100]]
-    
-    def _execute_google_search(self, state: OverallState) -> List[str]:
-        """執行 Google 搜尋（內嵌實作）"""
-        if not self.google_client:
-            raise ValueError("Google 客戶端未配置，無法執行 Google 搜尋。")
-        
-        search_queries = state.search_queries
-        self.logger.debug(f"DEBUG: _execute_google_search: search_queries type: {type(search_queries)}, value: {search_queries}")
-        results = []
-        
-        try:
-            for query in search_queries[:2]:  # 限制最多2個查詢
-                current_date = get_current_date(timezone_str=self.config.system.timezone)
-                
-                # 準備傳遞給 Gemini 模型的提示
-                formatted_prompt = web_searcher_instructions.format(
-                    research_topic=query,
-                    current_date=current_date
-                )
-                
-                try:
-                    model_name = self.tool_analysis_llm.model
-                    # 調用 Gemini API 並啟用 google_search 工具
-                    response = self.google_client.models.generate_content(
-                        model=model_name,
-                        contents=formatted_prompt,
-                        config={
-                            "tools": [{"google_search": {}}],
-                            "temperature": 0
-                        }
-                    )
-                    if response.text:
-                        # 生成一個唯一的 ID 給每個查詢結果，用於 resolve_urls
-                        query_id = state.tool_round * 100 + search_queries.index(query) # 確保唯一性
-                        
-                        # 初始化安全預設值
-                        grounding_chunks = []
-                        resolved_urls = {} # 確保初始化為空字典
-                        citations = []
-                        modified_text = response.text
-
-                        # 嘗試提取 grounding_chunks
-                        if response.candidates and len(response.candidates) > 0:
-                            candidate_0 = response.candidates[0]
-                            if candidate_0 and hasattr(candidate_0, 'grounding_metadata') and candidate_0.grounding_metadata:
-                                if hasattr(candidate_0.grounding_metadata, 'grounding_chunks') and candidate_0.grounding_metadata.grounding_chunks:
-                                    grounding_chunks = candidate_0.grounding_metadata.grounding_chunks
-
-                        # 處理 URL 解析和引用
-                        try:
-                            resolved_urls = resolve_urls(grounding_chunks, query_id)
-                            # 確認這裡沒有對列表類型的檢查，因為 resolved_urls 應為字典
-                        except Exception as url_e:
-                            self.logger.warning(f"解析 URL 失敗: {url_e}")
-                            resolved_urls = {} # 確保重設為空字典
-
-                        try:
-                            citations = get_citations(response, resolved_urls)
-                            # 確認這裡不再有對列表類型的檢查，因為 get_citations 內部會處理
-                        except Exception as cite_e:
-                            self.logger.warning(f"獲取引用失敗: {cite_e}")
-                            import traceback
-                            print(traceback.format_exc())
-                            citations = []
-
-                        # 插入引用標記
-                        modified_text = insert_citation_markers(response.text, citations)
-                        
-                        results.append(modified_text)
-                    else:
-                        results.append(f"針對查詢「{query}」沒有找到內容。")
-                except Exception as llm_e:
-                    self.logger.error(f"LLM 執行 Google 搜尋失敗: {llm_e}")
-                    results.append(f"執行搜尋時發生內部錯誤: {llm_e}")
-                
-        except Exception as e:
-            self.logger.error(f"Google 搜尋失敗: {e}")
-        
-        return results
-    
-    def _execute_citation_tool(self, state: OverallState) -> List[str]:
-        """執行引用工具（內嵌實作）"""
-        tool_results = state.tool_results
-        
-        # 簡化的引用生成
-        citations = []
-        for i, result in enumerate(tool_results, 1):
-            citation = f"[{i}] {result[:50]}..."
-            citations.append(citation)
-        
-        return citations
-    
     def _evaluate_results_sufficiency(self, tool_results: List[str], research_topic: str) -> bool:
         """評估結果是否充分"""
-        # 如果沒有工具結果，表示可能沒有合適的工具，認為應該結束
-        if not tool_results:
-            return True  # 修改：沒有結果時認為充分，避免無限循環
-        
-        # 如果有結果且長度合理，認為充分
-        total_length = sum(len(result) for result in tool_results)
-        return total_length > 20  # 至少20字符的結果
-    
+        # 重構後簡化邏輯：總是認為結果充分，避免無限循環
+        # 實際的輪次控制由 max_tool_rounds 來處理
+        return True
+
     def _generate_final_answer(self, messages: List[MsgNode], context: str) -> str:
         """生成最終答案（使用專用 LLM）"""
         if not messages:
@@ -681,7 +634,6 @@ class UnifiedAgent(ProgressMixin):
                         "snippet": result
                     })
         return sources
-
 
 
 def create_unified_agent(config: Optional[AppConfig] = None) -> UnifiedAgent:

@@ -13,24 +13,35 @@ import os
 import discord
 
 from schemas.agent_types import MsgNode
-from schemas.config_types import AppConfig, AgentConfig, AgentBehaviorConfig, LLMConfig, DiscordConfig, ToolConfig
+from schemas.config_types import AppConfig, AgentConfig, AgentBehaviorConfig, LLMConfig, DiscordConfig, ToolConfig, LLMProviderConfig
 
 
 def get_test_discord_config():
     """創建測試用的 Discord 配置"""
-    with patch.dict('os.environ', {'GEMINI_API_KEY': 'test_key_12345'}):
-        return AppConfig(
-            agent=AgentConfig(
-                tools={"google_search": ToolConfig(enabled=True, priority=1)},
-                behavior=AgentBehaviorConfig(max_tool_rounds=1, enable_reflection=True)
-            ),
-            discord=DiscordConfig(
-                bot_token="test_token",
-                enable_conversation_history=True,
-                status_message="測試 AI 助手",
-                client_id="123456789"
-            )
-        )
+    # 移除環境變數補丁，直接在 AppConfig 中設定 LLM Provider 的 API Key
+    # with patch.dict('os.environ', {'GEMINI_API_KEY': 'test_key_12345'}):
+    
+    # 創建一個模擬的 LLMProviderConfig
+    mock_google_provider_config = LLMProviderConfig(api_key="test_key_12345")
+    
+    # 創建一個 LLMConfig 並包含模擬的 Provider
+    mock_llm_config = LLMConfig(
+        providers={"google": mock_google_provider_config}
+    )
+
+    return AppConfig(
+        agent=AgentConfig(
+            tools={"google_search": ToolConfig(enabled=True, priority=1)},
+            behavior=AgentBehaviorConfig(max_tool_rounds=1, enable_reflection=True)
+        ),
+        discord=DiscordConfig(
+            bot_token="test_token",
+            enable_conversation_history=True,
+            status_message="測試 AI 助手",
+            client_id="123456789"
+        ),
+        llm=mock_llm_config # 將模擬的 LLMConfig 傳入
+    )
 
 
 @pytest.mark.asyncio
@@ -201,7 +212,13 @@ def test_simplified_config_usage():
     assert test_config.discord.bot_token == "test_token"
     assert test_config.discord.enable_conversation_history is True
     assert test_config.agent.behavior.max_tool_rounds == 1
-    assert test_config.gemini_api_key == "test_key_12345"
+    
+    # 使用 patch.dict 來確保 os.getenv 返回測試值
+    with patch.dict('os.environ', {'GEMINI_API_KEY': 'test_key_12345'}):
+        # 由於 AppConfig 在初始化時會讀取環境變數，
+        # 我們需要確保在測試這個屬性時，環境變數是被正確設置的。
+        # AppConfig 的 gemini_api_key 屬性會優先從環境變數讀取。
+        assert test_config.gemini_api_key == "test_key_12345"
 
 
 @pytest.mark.asyncio

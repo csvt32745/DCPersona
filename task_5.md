@@ -1,0 +1,363 @@
+# Task 5: 整合測試與優化
+
+## 概述
+確保所有新功能正常運作，進行性能優化，完善錯誤處理，並更新相關文檔。
+
+## 目標
+- 端到端測試所有重構功能
+- 性能優化和瓶頸排除
+- 完善錯誤處理和降級機制
+- 更新文檔和部署指南
+
+## 依賴關係
+- **前置條件**: Task 1-4 全部完成
+- **後續任務**: 正式發布和部署
+
+## 子任務
+
+### Task 5.1: 端到端測試
+**狀態**: ⏳ 待開始
+
+**目標**: 測試完整的 Discord Bot 流程和所有功能組合
+
+**測試範圍**:
+- [ ] **Discord Bot 完整流程測試**
+  - 訊息接收和處理
+  - Agent 執行流程
+  - 工具使用和並行執行
+  - Persona 系統整合
+  - 串流回應功能
+  - 進度通知系統
+
+- [ ] **CLI 介面測試**
+  - 命令行參數處理
+  - 配置載入
+  - Agent 執行
+  - 輸出格式化
+
+- [ ] **配置系統測試**
+  - 型別安全配置載入
+  - 配置驗證
+  - 錯誤處理
+  - 預設值回退
+
+**測試腳本**:
+```python
+# tests/test_end_to_end.py
+import pytest
+import asyncio
+from unittest.mock import Mock, AsyncMock
+
+class TestEndToEndFlow:
+    @pytest.mark.asyncio
+    async def test_discord_bot_complete_flow(self):
+        """測試 Discord Bot 完整流程"""
+        # 模擬 Discord 訊息
+        mock_message = Mock()
+        mock_message.content = "請幫我搜尋最新的 AI 發展"
+        mock_message.author.display_name = "TestUser"
+        mock_message.guild.name = "TestGuild"
+        mock_message.channel.name = "general"
+        
+        # 測試訊息處理
+        handler = MessageHandler(config)
+        await handler.handle_message(mock_message)
+        
+        # 驗證結果
+        assert mock_message.reply.called
+        # 更多驗證...
+    
+    @pytest.mark.asyncio
+    async def test_agent_with_tools(self):
+        """測試 Agent 工具使用流程"""
+        # 測試計劃生成
+        # 測試並行工具執行
+        # 測試結果聚合
+        # 測試反思邏輯
+        pass
+    
+    @pytest.mark.asyncio
+    async def test_streaming_functionality(self):
+        """測試串流功能"""
+        # 測試串流啟用條件
+        # 測試串流塊生成
+        # 測試 Discord 串流顯示
+        pass
+    
+    def test_persona_integration(self):
+        """測試 Persona 系統整合"""
+        # 測試 persona 載入
+        # 測試 system prompt 構建
+        # 測試動態切換
+        pass
+```
+
+**驗收標準**:
+- 所有端到端測試通過
+- 覆蓋率達到 80% 以上
+- 無關鍵功能缺失
+
+### Task 5.2: 性能優化
+**狀態**: ⏳ 待開始
+
+**目標**: 優化系統性能，確保響應時間和資源使用合理
+
+**優化重點**:
+- [ ] **配置載入性能**
+  ```python
+  # utils/config_loader.py
+  import functools
+  
+  @functools.lru_cache(maxsize=1)
+  def load_typed_config_cached(config_path: str = "config.yaml") -> AppConfig:
+      """快取配置載入結果"""
+      return AppConfig.from_yaml(config_path)
+  ```
+
+- [ ] **工具執行性能**
+  - 並行執行優化
+  - 結果快取機制
+  - 超時控制
+
+- [ ] **串流回應性能**
+  - 串流塊大小優化
+  - Discord API 調用頻率控制
+  - 記憶體使用優化
+
+- [ ] **LLM 調用優化**
+  - 連接池管理
+  - 請求重試機制
+  - 回應快取
+
+**性能基準**:
+```python
+# tests/test_performance.py
+import time
+import pytest
+from memory_profiler import profile
+
+class TestPerformance:
+    def test_config_loading_performance(self):
+        """測試配置載入性能"""
+        start_time = time.time()
+        config = load_typed_config()
+        load_time = time.time() - start_time
+        
+        assert load_time < 0.1  # 100ms 內完成
+    
+    @pytest.mark.asyncio
+    async def test_agent_response_time(self):
+        """測試 Agent 回應時間"""
+        start_time = time.time()
+        # 執行 Agent
+        response_time = time.time() - start_time
+        
+        assert response_time < 10.0  # 10 秒內回應
+    
+    @profile
+    def test_memory_usage(self):
+        """測試記憶體使用"""
+        # 執行完整流程並監控記憶體
+        pass
+```
+
+**驗收標準**:
+- 配置載入時間 < 100ms
+- Agent 回應時間 < 10s（不含工具執行）
+- 串流延遲 < 100ms
+- 記憶體使用穩定，無洩漏
+
+### Task 5.3: 錯誤處理改進
+**狀態**: ⏳ 待開始
+
+**目標**: 完善所有模組的錯誤處理，實現優雅的降級機制
+
+**錯誤處理策略**:
+- [ ] **配置錯誤處理**
+  ```python
+  # utils/config_loader.py
+  class ConfigurationError(Exception):
+      """配置相關錯誤"""
+      pass
+  
+  def load_typed_config_with_fallback(config_path: str = "config.yaml") -> AppConfig:
+      """帶回退的配置載入"""
+      try:
+          return AppConfig.from_yaml(config_path)
+      except FileNotFoundError:
+          logger.warning(f"配置文件 {config_path} 不存在，使用預設配置")
+          return AppConfig()  # 預設配置
+      except Exception as e:
+          logger.error(f"配置載入失敗: {e}")
+          raise ConfigurationError(f"無法載入配置: {e}")
+  ```
+
+- [ ] **LLM 調用錯誤處理**
+  ```python
+  # agent_core/graph.py
+  async def _generate_final_answer_with_retry(self, messages: List[MsgNode], context: str) -> str:
+      """帶重試的答案生成"""
+      max_retries = 3
+      for attempt in range(max_retries):
+          try:
+              return self._generate_final_answer(messages, context)
+          except Exception as e:
+              self.logger.warning(f"LLM 調用失敗 (嘗試 {attempt + 1}/{max_retries}): {e}")
+              if attempt == max_retries - 1:
+                  # 最後一次嘗試失敗，使用回退答案
+                  return self._generate_basic_fallback_answer(messages, context)
+              await asyncio.sleep(2 ** attempt)  # 指數退避
+  ```
+
+- [ ] **工具執行錯誤處理**
+  - 工具超時控制
+  - 網路錯誤重試
+  - 部分失敗處理
+
+- [ ] **Discord 錯誤處理**
+  - API 限制處理
+  - 訊息發送失敗重試
+  - 權限錯誤處理
+
+**驗收標準**:
+- 所有關鍵路徑都有錯誤處理
+- 錯誤訊息清晰有用
+- 降級機制正常工作
+- 系統不會因單點錯誤崩潰
+
+### Task 5.4: 文檔更新
+**狀態**: ⏳ 待開始
+
+**目標**: 更新所有相關文檔，確保部署和使用指南完整
+
+**文檔更新清單**:
+- [ ] **配置文檔更新**
+  ```markdown
+  # config.yaml 配置指南
+  
+  ## 型別安全配置
+  
+  新的配置系統使用 dataclass 提供型別安全保證：
+  
+  ```yaml
+  # 串流配置
+  streaming:
+    enabled: true
+    chunk_size: 50
+    delay_ms: 50
+    min_content_length: 100
+  
+  # Persona 配置
+  prompt_system:
+    persona:
+      random_selection: false
+      default_persona: "helpful_assistant"
+      persona_directory: "personas"
+  ```
+
+- [ ] **API 文檔更新**
+  - 新的 Agent 介面
+  - 工具系統 API
+  - Progress 和 Streaming API
+
+- [ ] **部署指南更新**
+  - 新的依賴需求
+  - 配置遷移指南
+  - 性能調優建議
+
+- [ ] **開發者指南**
+  - 新的架構說明
+  - 工具開發指南
+  - 測試指南
+
+**驗收標準**:
+- 所有文檔與實際實作一致
+- 部署指南可以成功部署
+- 開發者指南清晰易懂
+
+### Task 5.5: 回歸測試
+**狀態**: ⏳ 待開始
+
+**目標**: 確保重構沒有破壞現有功能
+
+**回歸測試範圍**:
+- [ ] **現有功能驗證**
+  - Discord Bot 基本功能
+  - CLI 工具功能
+  - 配置系統功能
+  - 日誌系統功能
+
+- [ ] **向後相容性測試**
+  - 舊配置文件相容性
+  - API 介面相容性
+  - 行為一致性
+
+- [ ] **邊界條件測試**
+  - 極端輸入處理
+  - 資源限制測試
+  - 併發壓力測試
+
+**測試自動化**:
+```bash
+# 完整回歸測試套件
+python -m pytest tests/ -v --cov=. --cov-report=html
+
+# 性能回歸測試
+python -m pytest tests/test_performance.py -v
+
+# 端到端測試
+python -m pytest tests/test_end_to_end.py -v
+```
+
+**驗收標準**:
+- 所有回歸測試通過
+- 性能沒有明顯下降
+- 向後相容性保持
+
+## 測試驗證
+
+### 自動化測試套件
+```bash
+# 完整測試套件
+make test-all
+
+# 性能測試
+make test-performance
+
+# 端到端測試
+make test-e2e
+
+# 覆蓋率報告
+make coverage-report
+```
+
+### 手動測試清單
+- [ ] Discord Bot 手動測試
+- [ ] CLI 工具手動測試
+- [ ] 配置系統手動測試
+- [ ] 串流功能手動測試
+- [ ] Persona 系統手動測試
+
+## 預估時間
+**1 週** (5-7 個工作日)
+
+## 風險與注意事項
+1. **測試覆蓋率**: 確保測試覆蓋所有關鍵功能
+2. **性能回歸**: 注意重構可能帶來的性能影響
+3. **相容性問題**: 確保向後相容性
+4. **文檔同步**: 確保文檔與實作同步
+
+## 成功標準
+- [ ] 所有自動化測試通過
+- [ ] 性能指標達標
+- [ ] 錯誤處理完善
+- [ ] 文檔完整更新
+- [ ] 回歸測試通過
+- [ ] 系統穩定性良好
+
+## 交付物
+- [ ] 完整的測試套件
+- [ ] 性能基準報告
+- [ ] 錯誤處理文檔
+- [ ] 更新的部署指南
+- [ ] 回歸測試報告 

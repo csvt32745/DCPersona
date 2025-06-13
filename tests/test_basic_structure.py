@@ -3,7 +3,7 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
 from utils.config_loader import load_typed_config
 from utils.logger import setup_logger
 from schemas.agent_types import OverallState, MsgNode
-from schemas.config_types import AppConfig
+from schemas.config_types import AppConfig, SystemConfig
 
 
 def test_load_config():
@@ -15,9 +15,19 @@ def test_load_config():
 
 
 def test_logger_setup(capsys):
-    setup_logger({"log_level": "INFO"})
-    # 無例外即視為成功
-    assert True
+    # 創建一個模擬的 AppConfig 物件
+    mock_system_config = SystemConfig(log_level="INFO")
+    mock_app_config = AppConfig(system=mock_system_config)
+
+    setup_logger(mock_app_config)
+    
+    # 捕獲日誌輸出
+    captured = capsys.readouterr()
+    assert "Logger initialized" in captured.out or "Logger initialized" in captured.err
+    assert "INFO" in captured.out or "INFO" in captured.err
+    
+    # 再次設置為預設，避免影響其他測試
+    setup_logger(AppConfig())
 
 
 def test_overall_state():

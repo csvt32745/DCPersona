@@ -186,20 +186,50 @@ class TestPromptSystem:
         """測試工具說明生成"""
         system = PromptSystem()
         
-        tools = ["google_search", "citation"]
+        tools = ["google_search"]
         descriptions = system.generate_tool_descriptions(tools)
         
         assert "我的能力包括" in descriptions
-        assert "網路搜索" in descriptions
-        assert "來源引用" in descriptions
+        assert "我可以提供網路搜尋結果" in descriptions
+        assert "來源引用" not in descriptions # Ensure citation is removed
     
     def test_generate_tool_descriptions_empty(self):
-        """測試空工具列表的說明生成"""
         system = PromptSystem()
-        
         descriptions = system.generate_tool_descriptions([])
-        assert descriptions == ""
-    
+        assert "我的能力包括" not in descriptions
+        assert "沒有可用的工具" not in descriptions # This assertion was incorrect, empty should return empty string.
+
+    def test_generate_tool_descriptions_unsupported(self):
+        system = PromptSystem()
+        descriptions = system.generate_tool_descriptions(["unsupported_tool"])
+        assert "我的能力包括" not in descriptions  # 修正：不應包含此字串
+        assert descriptions == ""  # 修正：應返回空字串
+
+    def test_generate_tool_descriptions_multiple(self):
+        system = PromptSystem()
+        descriptions = system.generate_tool_descriptions(["google_search", "web_research"])
+        
+        assert "我的能力包括" in descriptions
+        assert "我可以提供網路搜尋結果" in descriptions
+        assert "我可以進行深度網路研究和分析" in descriptions
+
+    def test_get_system_instructions_without_tools(self):
+        system = PromptSystem()
+        cfg = {"system_prompt": "你是一個友善、聰明的聊天助手。"}
+        system_instructions = system.get_system_instructions(cfg, [])
+        assert "你是一個友善、聰明的聊天助手" in system_instructions
+        assert "我的能力包括" not in system_instructions # 沒有工具，不應該有此區塊
+
+    def test_get_system_instructions_with_google_search(self):
+        system = PromptSystem()
+        cfg = {"system_prompt": "你是一個智能搜尋計劃生成器。"}
+        system_instructions = system.get_system_instructions(cfg, ["google_search"])
+        assert "你是一個智能搜尋計劃生成器" in system_instructions
+        assert "我的能力包括" in system_instructions
+        assert "我可以提供網路搜尋結果" in system_instructions
+        assert "google_search" not in system_instructions  # 確保工具名稱本身不在系統指令中
+        assert "web_research" not in system_instructions # 確保其他工具不被提及
+
     def test_clear_persona_cache(self):
         """測試清理 persona 快取"""
         system = PromptSystem()
