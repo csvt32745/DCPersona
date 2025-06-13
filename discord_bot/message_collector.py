@@ -9,8 +9,9 @@ import discord
 import logging
 import asyncio
 from base64 import b64encode
-from typing import Dict, Any, Set, List, Optional
+from typing import Dict, Any, Set, List, Optional, Union, Iterator
 from dataclasses import dataclass, field
+from datetime import datetime
 
 from schemas.agent_types import MsgNode
 from agent_core.agent_session import get_agent_session
@@ -18,21 +19,154 @@ from agent_core.agent_session import get_agent_session
 
 @dataclass
 class ProcessedMessage:
-    """處理後的訊息結構"""
-    content: Any  # 可以是字串或包含圖片的列表
+    """處理後的訊息結構
+    
+    表示經過預處理的單一 Discord 訊息，包含清理後的內容和元數據
+    """
+    content: Union[str, List[Dict[str, Any]]]
+    """訊息內容，可以是純文字或包含圖片的結構化列表"""
+    
     role: str
+    """訊息角色，通常是 'user' 或 'assistant'"""
+    
     user_id: Optional[int] = None
+    """發送者的 Discord 用戶 ID"""
+
+
+@dataclass
+class CollectedMessages:
+    """收集到的訊息集合結構
+    
+    提供類型安全的訊息收集結果，包含處理後的訊息、用戶警告和會話資訊。
+    這個類別封裝了 Discord 訊息收集的完整結果，提供便利的存取方法。
+    """
+    messages: List[MsgNode] = field(default_factory=list)
+    """處理後的訊息列表，已轉換為 MsgNode 格式，按時間順序排列"""
+    
+    user_warnings: Set[str] = field(default_factory=set)
+    """用戶警告集合，包含處理過程中的提示訊息（如附件過大、內容截斷等）"""
+    
+    session_id: Optional[str] = None
+    """會話標識符，用於追蹤對話狀態和歷史管理"""
+    
+    collection_timestamp: datetime = field(default_factory=datetime.now)
+    """訊息收集的時間戳，用於追蹤和除錯"""
+    
+    # 便利方法
+    def has_warnings(self) -> bool:
+        """檢查是否有用戶警告
+        
+        Returns:
+            bool: 如果存在警告則返回 True
+        """
+        return len(self.user_warnings) > 0
+    
+
+    def message_count(self) -> int:
+        """獲取訊息數量
+        
+        Returns:
+            int: 收集到的訊息總數
+        """
+        return len(self.messages)
+
+    def get_latest_message(self) -> Optional[MsgNode]:
+        """獲取最新的訊息
+        
+        Returns:
+            Optional[MsgNode]: 最新的訊息，如果沒有訊息則返回 None
+        """
+        return self.messages[-1] if self.messages else None
+    
+    def get_messages_by_user_id(self, user_id: int) -> List[MsgNode]:
+        """根據用戶 ID 獲取訊息
+        
+        Args:
+            user_id: Discord 用戶 ID
+            
+        Returns:
+            List[MsgNode]: 該用戶發送的所有訊息
+        """
+        return [
+            msg for msg in self.messages 
+            if msg.metadata and msg.metadata.get("user_id") == user_id
+        ]
+    
+    def iter_messages(self) -> Iterator[MsgNode]:
+        """迭代所有訊息
+        
+        Yields:
+            MsgNode: 按順序產生每個訊息
+        """
+        yield from self.messages
+    
+    def add_warning(self, warning: str) -> None:
+        """添加用戶警告
+        
+        Args:
+            warning: 警告訊息
+        """
+        self.user_warnings.add(warning)
+    
+    def to_dict(self) -> Dict[str, Any]:
+        """轉換為字典格式，便於序列化
+        
+        Returns:
+            Dict[str, Any]: 包含所有資料的字典
+        """
+        return {
+            "messages": [
+                {
+                    "role": msg.role,
+                    "content": msg.content,
+                    "metadata": msg.metadata
+                }
+                for msg in self.messages
+            ],
+            "user_warnings": list(self.user_warnings),
+            "session_id": self.session_id,
+            "collection_timestamp": self.collection_timestamp.isoformat(),
+            "message_count": self.message_count(),
+            "has_warnings": self.has_warnings()
+        }
+    
+    def __str__(self) -> str:
+        """字串表示
+        
+        Returns:
+            str: 人類可讀的訊息集合描述
+        """
+        return (
+            f"CollectedMessages(messages={self.message_count()}, "
+            f"warnings={len(self.user_warnings)}, "
+            f"session_id={self.session_id})"
+        )
+    
+    def __repr__(self) -> str:
+        """詳細字串表示
+        
+        Returns:
+            str: 詳細的物件表示
+        """
+        return (
+            f"CollectedMessages("
+            f"messages={self.messages}, "
+            f"user_warnings={self.user_warnings}, "
+            f"session_id='{self.session_id}', "
+            f"collection_timestamp={self.collection_timestamp}"
+            f")"
+        )
 
 
 async def collect_message(
     new_msg: discord.Message,
-    cfg: dict,
     discord_client_user: discord.User,
+    enable_conversation_history: bool = True,
     max_text: int = 4000,
     max_images: int = 4,
     max_messages: int = 10,
     httpx_client = None
-) -> Dict[str, Any]:
+) -> CollectedMessages:
     """
     收集並處理訊息內容，建立對話歷史鏈
     
@@ -46,7 +180,7 @@ async def collect_message(
         httpx_client: HTTP 客戶端（用於下載附件）
     
     Returns:
-        Dict: 包含處理後訊息和用戶警告的字典
+        CollectedMessages: 包含處理後訊息和用戶警告的結構化資料
     """
     messages = []
     user_warnings = set()
@@ -60,11 +194,11 @@ async def collect_message(
     session = session_manager.get_session(session_id)
     
     # 記錄收到的訊息
-    logging.info(f"處理訊息 (用戶ID: {new_msg.author.id}, 附件: {len(new_msg.attachments)}, 會話: {session_id})")
+    logging.info(f"處理訊息 (用戶: {new_msg.author.display_name}, 附件: {len(new_msg.attachments)}, 會話: {session_id})")
     
     # 獲取訊息歷史
     history_msgs = []
-    if cfg.get("enable_conversation_history", True):
+    if enable_conversation_history:
         try:
             history_msgs = [m async for m in curr_msg.channel.history(before=curr_msg, limit=max_messages)][::-1]
         except discord.HTTPException:
@@ -114,6 +248,7 @@ async def collect_message(
             content=processed_msg.content if isinstance(processed_msg.content, str) else str(processed_msg.content),
             metadata={"user_id": processed_msg.user_id} if processed_msg.user_id else {}
         )
+        print(msg_node)
         messages.append(msg_node)
     
     # 快取處理後的訊息到會話
@@ -128,11 +263,11 @@ async def collect_message(
         ]
         session_manager.cache_discord_messages(session_id, discord_messages)
     
-    return {
-        "messages": messages,
-        "user_warnings": user_warnings,
-        "session_id": session_id
-    }
+    return CollectedMessages(
+        messages=messages,
+        user_warnings=user_warnings,
+        session_id=session_id
+    )
 
 
 async def _process_single_message(

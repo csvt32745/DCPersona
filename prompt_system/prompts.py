@@ -263,6 +263,28 @@ def build_system_prompt(
     cfg: Dict[str, Any],
     discord_context: Optional[Dict[str, Any]] = None
 ) -> str:
-    """建立系統提示詞的便利函數"""
-    system = get_prompt_system()
-    return system.build_system_prompt(cfg, discord_context) 
+    """快速建立系統提示詞的便利函數"""
+    prompt_system = get_prompt_system()
+    return prompt_system.build_system_prompt(cfg, discord_context)
+
+
+# ===== Agent 搜尋相關提示詞 =====
+
+def get_current_date(timezone_str: str = "Asia/Taipei"):
+    """取得當前日期的可讀格式，考慮傳入的時區設定"""
+    now = datetime.now(pytz.timezone(timezone_str))
+    return now.strftime("%B %d, %Y")
+
+
+web_searcher_instructions = """Conduct targeted Google Searches to gather the most recent, credible information on "{research_topic}" and synthesize it into a verifiable text artifact.
+
+Instructions:
+- Query should ensure that the most current information is gathered. The current date is {current_date}.
+- Conduct multiple, diverse searches to gather comprehensive information.
+- Consolidate key findings while meticulously tracking the source(s) for each specific piece of information.
+- The output should be a well-written summary or report based on your search findings. 
+- Only include the information found in the search results, don't make up any information.
+
+Research Topic:
+{research_topic}
+""" 

@@ -43,13 +43,16 @@ llmcord/
 │   ├── message_handler.py   # 處理 Discord 事件，將訊息轉換為通用訊息格式後傳遞給統一 Agent
 │   ├── message_collector.py # 訊息收集與預處理
 │   ├── progress_manager.py  # Discord 進度消息管理
-│   └── response_formatter.py# LLM 回覆後處理與發送
+│   ├── response_formatter.py# LLM 回覆後處理與發送
+│   └── progress_adapter.py  # Discord 進度適配器 (實作 ProgressObserver)
 │
 ├── agent_core/              # **[核心]** 統一的 Agent 處理引擎
 │   ├── agent.py             # **[新/簡化]** 統一 Agent 實作，提供獨立運作介面 (極度精簡，僅作為入口)
 │   ├── graph.py             # **[核心新]** 負責 LangGraph 構建、所有節點定義及直接內嵌工具邏輯 (如 Google Search)
 │   ├── agent_session.py     # 管理單次對話的 Agent 會話與狀態
-│   └── agent_utils.py       # **[新]** 存放 Agent 核心專屬的輔助函式
+│   ├── agent_utils.py       # **[新]** 存放 Agent 核心專屬的輔助函式
+│   ├── progress_observer.py # **[新]** 進度觀察者介面，定義 ProgressEvent 和 ProgressObserver
+│   └── progress_mixin.py    # **[新]** 進度更新混入，提供 _notify_progress 等方法
 │
 ├── prompt_system/           # **[簡化]** 統一的提示詞管理系統
 │   ├── prompts.py           # **[新/合併]** 統一管理所有 Agent 提示詞、Persona 選擇與系統提示詞組裝
@@ -70,6 +73,28 @@ llmcord/
     └── ...                  # 所有測試檔案
 ```
 
+#### 進度管理解耦架構示意
+```mermaid
+graph TD
+    A["Agent Core<br/>(agent_core/graph.py)"] --> B["Progress Observer Interface<br/>(agent_core/progress_observer.py)"]
+    B --> C["Discord Progress Adapter<br/>(discord_bot/progress_adapter.py)"]
+    C --> D["Progress Manager<br/>(discord_bot/progress_manager.py)"]
+    
+    E["CLI Progress Adapter<br/>(cli/progress_adapter.py)"] --> B
+    F["Web Progress Adapter<br/>(web/progress_adapter.py)"] --> B
+    
+    A --> G["Progress Mixin<br/>(agent_core/progress_mixin.py)"]
+    G --> B
+    
+    H["Agent Session<br/>(agent_core/agent_session.py)"] --> A
+    
+    style A fill:#e1f5fe
+    style B fill:#f3e5f5
+    style G fill:#f3e5f5
+    style C fill:#e8f5e8
+    style D fill:#e8f5e8
+```
+
 ---
 
 ## 4. 模組職責與新流程設計
@@ -81,6 +106,8 @@ llmcord/
 *   **`graph.py`**: **核心職責**是根據配置動態構建 LangGraph 的 `StateGraph`。它將定義所有 LangGraph 節點的實現，包括 `generate_query_or_plan` (生成查詢/規劃)、`tool_selection` (工具選擇)、`execute_tool` (執行工具)，以及 `reflection` (反思)、`evaluate_research` (評估研究) 和 `finalize_answer` (最終答案)。**這些節點的設計和流程將嚴格參考 `reference_arch.md` 中定義的 Agent 核心流程。**所有工具的具體實現（如 Google Search 的調用、grounding metadata 處理、引用生成）將直接內嵌於相應的節點內部 (例如 `execute_tool` 節點內)，不再作為獨立的 `tools/` 模組。
 *   **`agent_session.py`**: 管理單次對話的 Agent 會話與狀態。
 *   **`agent_utils.py`**: 存放 Agent 核心邏輯強相關的輔助函式，如引用處理、研究主題獲取。
+*   **`progress_observer.py`**: 定義通用進度事件 (`ProgressEvent`) 和觀察者介面 (`ProgressObserver`)，實現 Agent 核心與外部 UI (如 Discord) 的解耦。包含 `on_progress_update`, `on_completion`, `on_error` 抽象方法。
+*   **`progress_mixin.py`**: 提供 `ProgressMixin` 類別，包含 `add_progress_observer`, `_notify_progress`, `_notify_completion`, `_notify_error` 等方法，讓 `UnifiedAgent` 可以通知註冊的觀察者。
 
 #### `prompt_system/prompts.py` - 統一提示詞管理
 *   負責合併所有提示詞管理功能，包括 Random persona 選擇、系統提示詞組裝（包含 Discord 特定、時間、用戶名等資訊）、動態工具說明生成。
@@ -225,133 +252,480 @@ python -c "from utils.config_loader import load_config; print('✓ Config loader
 python -c "from schemas.agent_types import OverallState; print('✓ Agent schemas work')"
 ```
 
-#### Week 2: 會話管理與 Discord 模組
-**目標**: 建立會話管理和 Discord 相關模組
+### Phase 2: Agent 進度更新解耦任務 (1 week)
+
+**目標**: 實現 Agent 核心與外部進度更新機制的解耦，採用 Observer Pattern + Mixin 架構。
 
 **任務清單**:
-- [ ] **Task 2.1**: 建立 `agent_session.py`
-  - 實作會話 ID 生成邏輯
-  - 建立 Discord 訊息歷史快取機制
-  - 實作 LangGraph 狀態存儲與管理
-  - 建立基於時間的清理機制
+- [ ] **Task 2.1**: 建立進度觀察者介面
+  - 建立 `agent_core/progress_observer.py`，定義通用進度事件和觀察者介面
+  - **參考實現**:
+    ```python
+    # agent_core/progress_observer.py
+    from abc import ABC, abstractmethod
+    from dataclasses import dataclass, field
+    from typing import Dict, Any, Optional, List
 
-- [ ] **Task 2.2**: 遷移 Discord 模組
-  - 遷移 `discord_bot/message_collector.py` (原 `pipeline/collector.py`)
-  - 遷移 `discord_bot/response_formatter.py` (原 `pipeline/postprocess.py`)
-  - 遷移 `discord_bot/progress_manager.py` 並簡化介面
-  - 整合會話管理到訊息收集流程
+    @dataclass
+    class ProgressEvent:
+        """通用進度事件"""
+        stage: str
+        message: str
+        progress_percentage: Optional[int] = None
+        eta_seconds: Optional[int] = None
+        metadata: Dict[str, Any] = field(default_factory=dict)
 
-- [ ] **Task 2.3**: 建立 Prompt System 基礎
-  - 建立 `prompt_system/prompts.py` (合併原 `persona_manager.py`, `system_prompt_builder.py`, `agent_prompts.py` 功能)
-  - 遷移 `random_system_prompt()` 功能
-  - 添加 persona 快取機制
+    class ProgressObserver(ABC):
+        """進度觀察者介面"""
+        
+        @abstractmethod
+        async def on_progress_update(self, event: ProgressEvent) -> None:
+            """處理進度更新"""
+            pass
+        
+        @abstractmethod
+        async def on_completion(self, final_result: str, sources: Optional[List[Dict]] = None) -> None:
+            """處理完成事件"""
+            pass
+        
+        @abstractmethod
+        async def on_error(self, error: Exception) -> None:
+            """處理錯誤事件"""
+            pass
+    ```
+
+- [ ] **Task 2.2**: 實作進度更新混入
+  - 建立 `agent_core/progress_mixin.py`，提供進度通知功能
+  - **參考實現**:
+    ```python
+    # agent_core/progress_mixin.py
+    from typing import List, Optional
+    from .progress_observer import ProgressObserver, ProgressEvent
+
+    class ProgressMixin:
+        """進度更新 Mixin"""
+        
+        def __init__(self):
+            self._progress_observers: List[ProgressObserver] = []
+        
+        def add_progress_observer(self, observer: ProgressObserver):
+            """添加進度觀察者"""
+            self._progress_observers.append(observer)
+        
+        async def _notify_progress(self, stage: str, message: str, 
+                                  progress_percentage: Optional[int] = None,
+                                  eta_seconds: Optional[int] = None,
+                                  **metadata):
+            """通知所有觀察者進度更新"""
+            event = ProgressEvent(
+                stage=stage, message=message,
+                progress_percentage=progress_percentage,
+                eta_seconds=eta_seconds, metadata=metadata
+            )
+            
+            for observer in self._progress_observers:
+                try:
+                    await observer.on_progress_update(event)
+                except Exception as e:
+                    self.logger.error(f"進度觀察者更新失敗: {e}")
+        
+        async def _notify_completion(self, final_result: str, sources: Optional[List[Dict]] = None):
+            """通知完成"""
+            for observer in self._progress_observers:
+                try:
+                    await observer.on_completion(final_result, sources)
+                except Exception as e:
+                    self.logger.error(f"完成通知失敗: {e}")
+    ```
+
+- [ ] **Task 2.3**: 修改 UnifiedAgent 支援進度更新
+  - 修改 `agent_core/graph.py` 中的 `UnifiedAgent` 類別繼承 `ProgressMixin`
+  - 在關鍵節點中添加進度通知調用：
+    - `generate_query_or_plan`: 通知分析開始
+    - `execute_tool`: 通知工具執行進度，包含輪次和百分比
+    - `reflection`: 通知反思階段
+    - `finalize_answer`: 通知答案生成和完成
+  - 添加錯誤處理，確保進度通知失敗不影響 Agent 主流程
+  - **參考修改**:
+    ```python
+    # agent_core/graph.py (部分修改)
+    from .progress_mixin import ProgressMixin
+
+    class UnifiedAgent(ProgressMixin):
+        def __init__(self, config: Optional[Dict[str, Any]] = None):
+            super().__init__()  # 初始化 ProgressMixin
+            # ... 原有初始化代碼
+        
+        def generate_query_or_plan(self, state: OverallState) -> Dict[str, Any]:
+            try:
+                # 通知開始階段
+                asyncio.create_task(self._notify_progress(
+                    stage="generate_query", 
+                    message="🤔 正在分析您的問題..."
+                ))
+                # ... 原有邏輯
+            except Exception as e:
+                asyncio.create_task(self._notify_error(e))
+                raise
+        
+        def execute_tool(self, state: OverallState) -> Dict[str, Any]:
+            try:
+                current_round = state.tool_round + 1
+                max_rounds = self.behavior_config.get("max_tool_rounds", 1)
+                
+                asyncio.create_task(self._notify_progress(
+                    stage="execute_tool",
+                    message=f"🔍 正在使用 {state.selected_tool} 搜尋資料...",
+                    progress_percentage=int((current_round / max_rounds) * 50)
+                ))
+                # ... 原有邏輯
+            except Exception as e:
+                asyncio.create_task(self._notify_error(e))
+                raise
+    ```
+
+- [ ] **Task 2.4**: 建立 Discord 進度適配器
+  - 建立 `discord_bot/progress_adapter.py`，實現 Discord 特定的進度觀察者
+  - **參考實現**:
+    ```python
+    # discord_bot/progress_adapter.py
+    import discord
+    from agent_core.progress_observer import ProgressObserver, ProgressEvent
+    from .progress_manager import get_progress_manager
+    from schemas.agent_types import DiscordProgressUpdate, ResearchSource
+
+    class DiscordProgressAdapter(ProgressObserver):
+        """Discord 進度適配器"""
+        
+        def __init__(self, original_message: discord.Message):
+            self.original_message = original_message
+            self.progress_manager = get_progress_manager()
+        
+        async def on_progress_update(self, event: ProgressEvent) -> None:
+            """處理進度更新"""
+            discord_progress = DiscordProgressUpdate(
+                stage=event.stage,
+                message=event.message,
+                progress_percentage=event.progress_percentage,
+                eta_seconds=event.eta_seconds
+            )
+            
+            await self.progress_manager.send_or_update_progress(
+                original_message=self.original_message,
+                progress=discord_progress
+            )
+        
+        async def on_completion(self, final_result: str, sources: Optional[List[Dict]] = None) -> None:
+            """處理完成事件"""
+            completion_progress = DiscordProgressUpdate(
+                stage="completed",
+                message="✅ 研究完成！",
+                progress_percentage=100
+            )
+            
+            research_sources = []
+            if sources:
+                research_sources = [
+                    ResearchSource(title=s.get("title", ""), url=s.get("url", ""), snippet=s.get("snippet", ""))
+                    for s in sources
+                ]
+            
+            await self.progress_manager.send_or_update_progress(
+                original_message=self.original_message,
+                progress=completion_progress,
+                final_answer=final_result,
+                sources=research_sources
+            )
+    ```
+
+- [ ] **Task 2.5**: 整合 Discord 訊息處理
+  - 修改 `discord_bot/message_handler.py`，在 Agent 處理中註冊進度適配器
+  - **參考修改**:
+    ```python
+    # discord_bot/message_handler.py (簡化版)
+    from agent_core.graph import create_unified_agent
+    from .progress_adapter import DiscordProgressAdapter
+
+    async def process_message_with_agent(new_msg: discord.Message, cfg: Dict[str, Any]):
+        """使用統一 Agent 處理訊息"""
+        try:
+            # 創建 Agent 實例
+            agent = create_unified_agent(cfg)
+            
+            # 創建並註冊 Discord 進度適配器
+            progress_adapter = DiscordProgressAdapter(new_msg)
+            agent.add_progress_observer(progress_adapter)
+            
+            # 準備初始狀態並執行
+            initial_state = OverallState(messages=[MsgNode(role="user", content=new_msg.content)])
+            graph = agent.build_graph()
+            result = await graph.ainvoke(initial_state)
+            
+        except Exception as e:
+            logging.error(f"Agent 處理失敗: {e}")
+            await new_msg.reply("抱歉，處理您的請求時發生錯誤。")
+    ```
+
+- [ ] **Task 2.6**: 重構配置架構為型別安全的 Dataclass 結構
+  - 重新組織 `config.yaml` 為分層結構，提升可讀性和維護性
+  - 建立 `schemas/config_types.py` 使用 Pydantic 或 dataclass 定義配置結構
+  - 建立 `utils/config_loader.py` 支援型別安全的配置載入和驗證
+  - **參考結構**:
+    ```python
+    # schemas/config_types.py
+    from dataclasses import dataclass, field
+    from typing import Dict, Any, List, Optional
+    from pathlib import Path
+    import yaml
+
+    @dataclass
+    class ToolConfig:
+        """工具配置"""
+        enabled: bool = False
+        priority: int = 999
+        config: Dict[str, Any] = field(default_factory=dict)
+
+    @dataclass
+    class AgentBehaviorConfig:
+        """Agent 行為配置"""
+        max_tool_rounds: int = 1
+        timeout_per_round: int = 30
+        enable_reflection: bool = True
+        enable_progress: bool = True
+
+    @dataclass
+    class AgentThresholdsConfig:
+        """Agent 決策閾值配置"""
+        tool_usage: float = 0.3
+        completion: float = 0.8
+        confidence: float = 0.7
+
+    @dataclass
+    class AgentConfig:
+        """Agent 核心配置"""
+        tools: Dict[str, ToolConfig] = field(default_factory=dict)
+        behavior: AgentBehaviorConfig = field(default_factory=AgentBehaviorConfig)
+        thresholds: AgentThresholdsConfig = field(default_factory=AgentThresholdsConfig)
+
+    @dataclass
+    class DiscordPermissionsConfig:
+        """Discord 權限配置"""
+        allow_dms: bool = False
+        users: Dict[str, List[int]] = field(default_factory=lambda: {"allowed_ids": [], "blocked_ids": []})
+        roles: Dict[str, List[int]] = field(default_factory=lambda: {"allowed_ids": [], "blocked_ids": []})
+        channels: Dict[str, List[int]] = field(default_factory=lambda: {"allowed_ids": [], "blocked_ids": []})
+
+    @dataclass
+    class DiscordConfig:
+        """Discord Bot 配置"""
+        bot_token: str = ""
+        client_id: str = ""
+        status_message: str = "AI Assistant"
+        limits: Dict[str, int] = field(default_factory=lambda: {"max_text": 100000, "max_images": 3, "max_messages": 25})
+        permissions: DiscordPermissionsConfig = field(default_factory=DiscordPermissionsConfig)
+        maintenance: Dict[str, Any] = field(default_factory=lambda: {"enabled": False, "message": "維護中..."})
+
+    @dataclass
+    class LLMModelConfig:
+        """LLM 模型配置"""
+        model: str = "gemini-2.0-flash-exp"
+        temperature: float = 0.7
+
+    @dataclass
+    class LLMConfig:
+        """LLM 配置"""
+        default_model: str = "openai/gemini-2.0-flash-exp"
+        providers: Dict[str, Dict[str, str]] = field(default_factory=dict)
+        models: Dict[str, LLMModelConfig] = field(default_factory=dict)
+
+    @dataclass
+    class PromptSystemConfig:
+        """提示詞系統配置"""
+        persona: Dict[str, Any] = field(default_factory=lambda: {
+            "enabled": True, "random_selection": True, "cache_personas": True, "default_file": "default.txt"
+        })
+        discord_integration: Dict[str, bool] = field(default_factory=lambda: {
+            "include_timestamp": True, "include_mentions": True, "include_user_context": True
+        })
+        system_prompt: Dict[str, Any] = field(default_factory=lambda: {
+            "use_file": True, "file": "trump.txt", "fallback": "你是一個有用的 AI 助手。"
+        })
+
+    @dataclass
+    class SystemConfig:
+        """系統配置"""
+        timezone: str = "Asia/Taipei"
+        debug_mode: bool = False
+        log_level: str = "INFO"
+
+    @dataclass
+    class AppConfig:
+        """應用程式總配置"""
+        system: SystemConfig = field(default_factory=SystemConfig)
+        discord: DiscordConfig = field(default_factory=DiscordConfig)
+        llm: LLMConfig = field(default_factory=LLMConfig)
+        agent: AgentConfig = field(default_factory=AgentConfig)
+        prompt_system: PromptSystemConfig = field(default_factory=PromptSystemConfig)
+        
+        @classmethod
+        def from_yaml(cls, config_path: str) -> 'AppConfig':
+            """從 YAML 文件載入配置"""
+            with open(config_path, 'r', encoding='utf-8') as f:
+                data = yaml.safe_load(f)
+            
+            # 遞歸轉換字典為 dataclass
+            return cls._dict_to_dataclass(data, cls)
+        
+        @staticmethod
+        def _dict_to_dataclass(data: Dict[str, Any], dataclass_type):
+            """將字典轉換為 dataclass"""
+            # 實現字典到 dataclass 的轉換邏輯
+            # 這裡可以使用 dacite 或 pydantic 等庫來簡化
+            pass
+        
+        def get_tool_config(self, tool_name: str) -> Optional[ToolConfig]:
+            """獲取特定工具的配置"""
+            return self.agent.tools.get(tool_name)
+        
+        def is_tool_enabled(self, tool_name: str) -> bool:
+            """檢查工具是否啟用"""
+            tool_config = self.get_tool_config(tool_name)
+            return tool_config.enabled if tool_config else False
+    ```
+    
+    ```python
+    # utils/config_loader.py (更新版)
+    from schemas.config_types import AppConfig
+    from pathlib import Path
+    import logging
+
+    _config_cache: Optional[AppConfig] = None
+
+    def load_config(config_path: str = "config.yaml", force_reload: bool = False) -> AppConfig:
+        """載入配置，支援快取"""
+        global _config_cache
+        
+        if _config_cache is None or force_reload:
+            try:
+                _config_cache = AppConfig.from_yaml(config_path)
+                logging.info(f"配置載入成功: {config_path}")
+            except Exception as e:
+                logging.error(f"配置載入失敗: {e}")
+                raise
+        
+        return _config_cache
+
+    def get_agent_config() -> AgentConfig:
+        """快速獲取 Agent 配置"""
+        return load_config().agent
+
+    def get_discord_config() -> DiscordConfig:
+        """快速獲取 Discord 配置"""
+        return load_config().discord
+    ```
 
 **測試驗證**:
 ```bash
-# 會話管理測試
-python -c """
-from agent_core.agent_session import AgentSession
-session = AgentSession()
-session_id = session.create_session(channel_id=456)
-print(f'✓ 會話創建成功: {session_id}')
-"""
-# Discord 模組測試 (需有測試檔案)
-# python tests/test_message_collector.py
-# python tests/test_response_formatter.py
+# 進度更新功能測試
+python -c "from agent_core.progress_observer import ProgressEvent; print('✓ Progress observer works')"
+python -c "from agent_core.progress_mixin import ProgressMixin; print('✓ Progress mixin works')"
+python -c "from discord_bot.progress_adapter import DiscordProgressAdapter; print('✓ Discord adapter works')"
 ```
 
-#### Week 3: LangGraph 節點統一化
-**目標**: 重構 LangGraph 節點，支援統一的工具使用流程
+### Phase 3: Discord Bot 整合與舊模組清理 (2-3 weeks)
+
+**目標**: 將 Discord Bot 模組與新的統一 Agent 架構整合，並清理舊的模組。
 
 **任務清單**:
-- [ ] **Task 3.1**: 重構 `agent_core/graph.py` 的節點定義
-  - 實作 `generate_query_or_plan` 節點（整合生成查詢與初步規劃邏輯）
-  - 實作 `tool_selection` 節點（決策使用何種工具）
-  - 實作 `execute_tool` 節點（通用工具調用器，內嵌 `web_search` 等工具邏輯）
-  - 實作 `reflection` 節點（結果反思）
-  - 實作 `evaluate_research` 節點（路由判斷，基於輪次與配置）
-  - 保留 `finalize_answer` 節點
+- [ ] **Task 3.1**: Discord Bot 核心邏輯調整
+  - 簡化 `discord_bot/message_handler.py`，使其主要負責接收 Discord 訊息，進行基本的訊息過濾（例如機器人自身訊息、用戶訊息過濾），將核心訊息內容轉換為 `schemas/agent_types.py` 定義的通用訊息格式 (`MsgNode`)，並呼叫 `agent_core/agent.py` 中的統一 Agent 介面。
+  - 調整 `discord_bot/client.py` 確保其能正確載入新的 Agent 實例。
+  - **具體清理任務（來自先前的分析）：**
+    *   從 `message_handler.py` 移除權限檢查 (`is_bad_user`, `is_bad_channel`)、維護模式檢查等邏輯。
+    *   移除 `reload_config()` 的直接呼叫。
+    *   移除 `initialize_langgraph_systems()` 的呼叫。
+    *   移除 `OpenAI` 客戶端初始化和模型能力判斷邏輯。
+    *   移除對 `pipeline.rag` 和 `pipeline.llm` 的直接呼叫。
+    *   移除舊的 `msg_nodes` 全局變數的管理和清理邏輯。
 
-- [ ] **Task 3.2**: 重構狀態管理
-  - 統一 `schemas/agent_types.py` 的狀態結構
-  - 簡化 `OverallState` 結構，專注於工具使用追蹤
-  - 改進會話狀態管理 (配合 `agent_session.py`)
+- [ ] **Task 3.2**: 整合提示詞系統
+  - 更新 `discord_bot/message_handler.py` 以使用 `prompt_system/prompts.py` 統一管理提示詞，包括 Discord 特定提示詞的組裝。
 
-- [ ] **Task 3.3**: 整合測試
-  - 建立端到端的 Agent 測試
-  - 驗證不同工具配置下的行為
-  - 測試輪次控制機制
+- [ ] **Task 3.3**: 整合響應格式化與發送
+  - 確保 `discord_bot/response_formatter.py` 正確處理來自 Agent 核心的最終答案，並以 Discord 友好的格式發送。
 
-- [ ] **Task 3.4**: 修正 `_execute_google_search` 未返回搜尋結果的問題
-  - 分析問題：`_execute_google_search` 在第二次對話中未能返回實際的 Google 搜尋結果，大型語言模型 (LLM) 僅回應其角色設定而非執行搜尋工具。
-  - 解決方案：修改 `_execute_google_search` 函數中的 `google_client.models.generate_content` 調用，將 `contents` 參數調整為包含兩個部分：第一部分是 `web_searcher_instructions`（作為系統指示），第二部分是實際的搜尋查詢 `query`。這樣 LLM 就能正確觸發搜尋工具並返回結果。
+- [ ] **Task 3.4**: 舊模組清理與遷移
+  - **移除 `discordbot(old)/` 目錄**: 清理所有不再需要的舊 Discord Bot 相關檔案，包括 `discordbot(old)/message_handler.py`, `discordbot(old)/client.py`, `discordbot(old)/msg_node.py`。
+  - **移除 `core/session_manager.py`**: 由於 `agent_core/agent_session.py` 將管理所有會話，移除舊的會話管理模組並更新所有相關引用。
+  - **重構 `pipeline/` 模組**: 
+    - 從 `pipeline/rag` 和 `pipeline/llm` 中移除所有與 LangGraph 代理核心流程或工具調用（特別是 Google Search）相關的邏輯
+    - 確保這些功能已完全遷移至 `agent_core/graph.py` 的相應節點
+    - 如果模組完全失去其職責，則考慮移除
+  - **清理 `agents/` 目錄**: 
+    - 移除 `agents/tools_and_schemas.py`，工具定義已內嵌至 `agent_core/graph.py`，資料結構已遷移至 `schemas/agent_types.py`
+    - 移除 `agents/configuration.py`，內容已整合至 `config.yaml`
+    - 移除 `agents/utils.py`，Agent 核心相關函式已遷移至 `agent_core/agent_utils.py`
+    - 移除 `agents/research_agent.py` 中的 `create_progress_callback` 和相關 Discord 耦合邏輯
+  - **清理舊訊息節點管理**: 
+    - 移除 `discordbot(old)/msg_node.py` 文件
+    - 從所有相關文件中移除對 `msg_nodes` 全局變數的引用和操作
+    - 確保 `MsgNode` 的定義已成功遷移到 `schemas/agent_types.py`
+  - **清理舊進度管理**: 
+    - 遷移或移除 `agents.tools_and_schemas.DiscordTools.cleanup_old_messages` 的功能
+    - 如果該功能在新架構中仍有必要，則應將其遷移至 `discord_bot/progress_manager.py`
+  - **清理舊提示詞功能**: 
+    - 從 `core/utils.py` 中移除 `random_system_prompt` 相關功能
+    - 更新所有對其的引用，使其指向 `prompt_system/prompts.py` 中新的實現
 
 **測試驗證**:
 ```bash
-# LangGraph 統一流程測試 (需有測試檔案)
-# python tests/test_unified_workflow.py
-# 不同配置下的行為測試 (需有測試檔案)
-# python tests/test_configurable_behavior.py
-# 搜尋結果修正測試 (需有測試檔案)
-# python tests/test_google_search_fix.py
+# 整合測試 (需要啟動 Bot 並實際發送訊息，驗證端到端流程)
+# 確保 Discord Bot 能夠正確響應，Agent 邏輯正常運作，且無舊模組遺留問題。
 ```
 
-### Phase 2: Discord Bot 整合 (1-2 weeks)
+### Phase 4: 進階功能與優化 (Ongoing)
 
-#### Week 4: Discord 模組重構
-**目標**: 重構 Discord 相關模組，整合統一 Agent
+**目標**: 持續優化 Agent 性能、擴展功能並提升使用者體驗。
 
 **任務清單**:
-- [ ] **Task 4.1**: 簡化 `message_handler.py`
-  - 移除模式選擇邏輯
-  - 整合統一 Agent 調用
-  - 簡化錯誤處理流程
-
-- [ ] **Task 4.2**: 遷移支援模組
-  - 遷移 `discord_bot/message_collector.py` (原 `pipeline/collector.py`)
-  - 遷移 `discord_bot/response_formatter.py` (原 `pipeline/postprocess.py`)
-  - 遷移 `discord_bot/progress_manager.py` 並簡化介面
-
-- [ ] **Task 4.3**: 更新配置系統
-  - 調整配置結構支援統一 Agent
-  - 移除模式相關配置選項
-  - 確保向後兼容性
+- [ ] **Task 4.1**: 錯誤處理與日誌改進
+- [ ] **Task 4.2**: 效能優化 (例如： LangGraph Cache, 工具並行化)
+- [ ] **Task 4.3**: 擴展工具庫
+- [ ] **Task 4.4**: 更多應用場景支援 (如 CLI, Web UI 整合)
+  - 實現 CLI 進度適配器 (`cli/progress_adapter.py`)，將進度事件輸出到終端
+  - 實現 Web 進度適配器 (`web/progress_adapter.py`)，透過 WebSocket 或 SSE 發送進度更新
+  - **參考實現**:
+    ```python
+    # cli/progress_adapter.py
+    from agent_core.progress_observer import ProgressObserver, ProgressEvent
+    
+    class CLIProgressAdapter(ProgressObserver):
+        async def on_progress_update(self, event: ProgressEvent) -> None:
+            if event.progress_percentage:
+                print(f"[{event.progress_percentage}%] {event.message}")
+            else:
+                print(f"[進行中] {event.message}")
+        
+        async def on_completion(self, final_result: str, sources=None) -> None:
+            print(f"[完成] {final_result}")
+    
+    # web/progress_adapter.py  
+    class WebProgressAdapter(ProgressObserver):
+        def __init__(self, websocket_connection):
+            self.websocket = websocket_connection
+        
+        async def on_progress_update(self, event: ProgressEvent) -> None:
+            await self.websocket.send_json({
+                "type": "progress",
+                "stage": event.stage,
+                "message": event.message,
+                "percentage": event.progress_percentage
+            })
+    ```
 
 **測試驗證**:
 ```bash
-# Discord 整合測試 (需有測試檔案)
-# python tests/test_discord_integration.py
-# 配置兼容性測試 (需有測試檔案)
-# python tests/test_config_compatibility.py
-```
-
-### Phase 3: 整合測試與優化 (1 week)
-
-#### Week 5: 系統整合與測試
-**目標**: 完整系統測試與性能優化
-
-**任務清單**:
-- [ ] **Task 5.1**: 端到端測試
-  - 測試不同工具配置的完整流程
-  - 驗證輪次控制機制
-  - 測試錯誤處理與降級
-
-- [ ] **Task 5.2**: 性能優化
-  - 統一 Agent 性能優化
-  - 提示詞快取機制
-  - 會話管理優化
-
-- [ ] **Task 5.3**: 文檔與部署準備
-  - 更新配置文檔
-  - 建立新架構說明
-  - 準備正式發布
-
-**測試驗證**:
-```bash
-# 完整系統測試套件 (需有測試檔案)
-# python -m pytest tests/ -v
-# 性能基準測試 (需有測試檔案)
-# python tests/test_performance_benchmark.py
+# 根據具體優化內容進行測試
 ```
 
 ---
@@ -359,14 +733,82 @@ print(f'✓ 會話創建成功: {session_id}')
 ## 6. 配置設計與行為定義
 
 ### 6.1 統一配置結構
+
+**目標**: 建立清晰、分層的配置架構，方便管理和修改。
+
 ```yaml
-# 統一 Agent 配置
+# ===== 核心系統配置 =====
+system:
+  timezone: "Asia/Taipei"
+  debug_mode: false
+  log_level: "INFO"
+
+# ===== Discord Bot 配置 =====
+discord:
+  bot_token: "YOUR_BOT_TOKEN"
+  client_id: "YOUR_CLIENT_ID"
+  status_message: "我愛小祥 汪汪"
+  
+  # 訊息處理限制
+  limits:
+    max_text: 100000
+    max_images: 3
+    max_messages: 25
+  
+  # 權限控制
+  permissions:
+    allow_dms: false
+    users:
+      allowed_ids: []
+      blocked_ids: []
+    roles:
+      allowed_ids: []
+      blocked_ids: []
+    channels:
+      allowed_ids: []
+      blocked_ids: []
+  
+  # 維護模式
+  maintenance:
+    enabled: false
+    message: "抱歉，我正在維護中..."
+
+# ===== LLM 提供商配置 =====
+llm:
+  # 預設模型
+  default_model: "openai/gemini-2.0-flash-exp"
+  
+  # 提供商設定
+  providers:
+    openai:
+      base_url: "https://generativelanguage.googleapis.com/v1beta/openai"
+      api_key: "YOUR_GEMINI_API_KEY"
+    gemini:
+      api_key: "YOUR_GEMINI_API_KEY"
+    # ... 其他提供商
+  
+  # 不同用途的模型配置
+  models:
+    tool_analysis:
+      model: "gemini-2.0-flash-exp"
+      temperature: 0.1
+    final_answer:
+      model: "gemini-2.0-flash-exp"
+      temperature: 0.7
+    reflection:
+      model: "gemini-2.0-flash-exp"
+      temperature: 0.3
+
+# ===== Agent 核心配置 =====
 agent:
   # 工具配置 - 決定 Agent 能力
   tools:
     google_search:
       enabled: true
       priority: 1
+      config:
+        max_results: 5
+        timeout: 10
     citation:
       enabled: true
       priority: 2
@@ -384,17 +826,57 @@ agent:
     completion: 0.8          # 何時認為結果足夠
     confidence: 0.7          # 工具結果信心度閾值
 
-# 提示詞系統配置  
+# ===== 提示詞系統配置 =====
 prompt_system:
+  # Persona 設定
   persona:
     enabled: true
     random_selection: true
     cache_personas: true
+    default_file: "default.txt"
+  
+  # Discord 整合
   discord_integration:
     include_timestamp: true
     include_mentions: true
-    timezone: "Asia/Taipei"
+    include_user_context: true
+  
+  # 系統提示詞
+  system_prompt:
+    use_file: true
+    file: "trump.txt"
+    fallback: "你是一個有用的 AI 助手。"
+
+# ===== 進度更新配置 =====
+progress:
+  # Discord 進度更新
+  discord:
+    enabled: true
+    use_embeds: true
+    update_interval: 2  # 秒
+    cleanup_delay: 30   # 完成後清理延遲
+  
+  # CLI 進度更新
+  cli:
+    enabled: true
+    show_percentage: true
+    show_eta: true
+
+# ===== 開發與測試配置 =====
+development:
+  session_file: "sessions.json"
+  enable_mock_tools: false
+  test_mode: false
 ```
+
+**配置分層說明**:
+- **system**: 全域系統設定
+- **discord**: Discord Bot 特定配置
+- **llm**: LLM 提供商和模型配置
+- **agent**: Agent 核心行為配置
+- **prompt_system**: 提示詞管理配置
+- **progress**: 進度更新機制配置
+- **development**: 開發和測試相關配置
 
 ### 6.2 Agent 行為範例
 

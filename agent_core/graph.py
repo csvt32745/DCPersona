@@ -11,20 +11,21 @@ import json
 from typing import Dict, Any, List, Optional, Literal
 from datetime import datetime
 
-from langchain_core.messages import AIMessage, HumanMessage
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langgraph.graph import StateGraph, START, END
 from langgraph.types import Send
 from langchain_core.runnables import RunnableConfig
 from google.genai import Client
 
-from schemas.agent_types import OverallState, MsgNode, DiscordProgressUpdate
+from schemas.agent_types import OverallState, MsgNode
 from utils.config_loader import load_config
-from agents.prompts import web_searcher_instructions, get_current_date
-from agents.utils import resolve_urls, get_citations, insert_citation_markers
+from prompt_system.prompts import web_searcher_instructions, get_current_date
+from .agent_utils import resolve_urls, get_citations, insert_citation_markers
+from .progress_mixin import ProgressMixin
 
 
-class UnifiedAgent:
+class UnifiedAgent(ProgressMixin):
     """統一的 Agent 實作，根據配置動態調整行為"""
     
     def __init__(self, config: Optional[Dict[str, Any]] = None):
@@ -34,6 +35,9 @@ class UnifiedAgent:
         Args:
             config: 配置字典，如果為 None 則載入預設配置
         """
+        # 首先初始化 ProgressMixin
+        super().__init__()
+        
         self.config = config or load_config()
         self.logger = logging.getLogger(__name__)
         
@@ -56,40 +60,33 @@ class UnifiedAgent:
         """初始化不同用途的 LLM 實例"""
         api_key = self.config.get("gemini_api_key")
         if not api_key:
-            return {
-                "tool_analysis": None,
-                "final_answer": None,
-                "reflection": None
-            }
+            raise ValueError("gemini_api_key is required in config")
         
-        # LLM 配置
-        llm_configs = self.config.get("llm_models", {
-            "tool_analysis": {
-                "model": "gemini-2.0-flash-exp",
-                "temperature": 0.1
-            },
-            "final_answer": {
-                "model": "gemini-2.0-flash-exp", 
-                "temperature": 0.7
-            },
-            "reflection": {
-                "model": "gemini-2.0-flash-exp",
-                "temperature": 0.3
+        llm_configs = None
+        if "llm" in self.config and "models" in self.config["llm"]:
+            llm_configs = self.config["llm"]["models"]
+        else:
+            # 提供預設配置
+            llm_configs = {
+                "tool_analysis": {"model": "gemini-2.0-flash-exp", "temperature": 0.1},
+                "final_answer": {"model": "gemini-2.0-flash-exp", "temperature": 0.7}
             }
-        })
         
         llm_instances = {}
-        for purpose, config in llm_configs.items():
+        for purpose, llm_config in llm_configs.items():
             try:
                 llm_instances[purpose] = ChatGoogleGenerativeAI(
-                    model=config.get("model", "gemini-2.0-flash-exp"),
-                    temperature=config.get("temperature", 0.5),
+                    model=llm_config.get("model", "gemini-2.0-flash-exp"),
+                    temperature=llm_config.get("temperature", 0.5),
                     api_key=api_key
                 )
-                self.logger.info(f"初始化 {purpose} LLM: {config.get('model')}")
+                self.logger.info(f"初始化 {purpose} LLM: {llm_config.get('model')}")
             except Exception as e:
                 self.logger.warning(f"初始化 {purpose} LLM 失敗: {e}")
                 llm_instances[purpose] = None
+        
+        self.tool_analysis_llm = llm_instances.get("tool_analysis")
+        self.final_answer_llm = llm_instances.get("final_answer")
         
         return llm_instances
     
@@ -133,7 +130,7 @@ class UnifiedAgent:
         
         return builder.compile()
     
-    def generate_query_or_plan(self, state: OverallState) -> Dict[str, Any]:
+    async def generate_query_or_plan(self, state: OverallState) -> Dict[str, Any]:
         """
         LangGraph 節點：生成查詢或初步規劃
         
@@ -142,15 +139,13 @@ class UnifiedAgent:
         try:
             self.logger.info("generate_query_or_plan: 開始分析用戶請求")
             
-            # 獲取最新的用戶訊息
-            if not state.messages:
-                return {"finished": True}
+            # 通知開始階段
+            await self._notify_progress(
+                stage="generate_query", 
+                message="🤔 正在分析您的問題..."
+            )
             
-            latest_message = state.messages[-1] if state.messages else None
-            if not latest_message or latest_message.role != "user":
-                return {"finished": True}
-            
-            user_content = latest_message.content
+            user_content = state.messages[-1].content
             max_tool_rounds = self.behavior_config.get("max_tool_rounds", 0)
             
             # 決定是否需要工具
@@ -174,6 +169,11 @@ class UnifiedAgent:
             
         except Exception as e:
             self.logger.error(f"generate_query_or_plan 失敗: {e}")
+            await self._notify_progress(
+                stage="error",
+                message="❌ 分析問題時發生錯誤",
+                progress_percentage=0
+            )
             return {"finished": True}
     
     def tool_selection(self, state: OverallState) -> Dict[str, Any]:
@@ -218,7 +218,7 @@ class UnifiedAgent:
             self.logger.error(f"tool_selection 失敗: {e}")
             return {"selected_tool": None}
     
-    def execute_tool(self, state: OverallState) -> Dict[str, Any]:
+    async def execute_tool(self, state: OverallState) -> Dict[str, Any]:
         """
         LangGraph 節點：執行工具
         
@@ -236,6 +236,27 @@ class UnifiedAgent:
             
             self.logger.info(f"execute_tool: 執行工具 {selected_tool}")
             
+            # 計算進度百分比
+            current_round = state.tool_round + 1
+            max_rounds = self.behavior_config.get("max_tool_rounds", 1)
+            progress_percentage = int((current_round / max_rounds) * 50)  # 工具執行佔總進度的50%
+            
+            # 通知工具執行進度
+            tool_names = {
+                "google_search": "Google 搜尋",
+                "citation": "引用處理"
+            }
+            tool_display_name = tool_names.get(selected_tool, selected_tool)
+            
+            await self._notify_progress(
+                stage="execute_tool",
+                message=f"🔍 正在使用 {tool_display_name} 搜尋資料... (第 {current_round}/{max_rounds} 輪)",
+                progress_percentage=progress_percentage,
+                current_round=current_round,
+                max_rounds=max_rounds,
+                tool_name=selected_tool
+            )
+            
             tool_results = []
             
             if selected_tool == "google_search":
@@ -249,7 +270,7 @@ class UnifiedAgent:
             current_round = state.tool_round + 1
             
             self.logger.info(f"execute_tool: 完成，結果數量={len(tool_results)}, 輪次={current_round}")
-            self.logger.info(f"execute_tool: 結果={tool_results}")
+            # self.logger.info(f"execute_tool: 結果={tool_results}")
             
             
             return {
@@ -261,7 +282,7 @@ class UnifiedAgent:
             self.logger.error(f"execute_tool 失敗: {e}")
             return {"tool_results": [], "tool_round": state.tool_round + 1}
     
-    def reflection(self, state: OverallState) -> Dict[str, Any]:
+    async def reflection(self, state: OverallState) -> Dict[str, Any]:
         """
         LangGraph 節點：反思
         
@@ -273,6 +294,13 @@ class UnifiedAgent:
                 return {"is_sufficient": True}
             
             self.logger.info("reflection: 開始反思工具結果")
+            
+            # 通知反思階段
+            await self._notify_progress(
+                stage="reflection",
+                message="🤔 正在評估搜尋結果的品質...",
+                progress_percentage=75
+            )
             
             tool_results = state.tool_results
             research_topic = state.research_topic
@@ -318,48 +346,60 @@ class UnifiedAgent:
         """決定下一步的路由函數"""
         return self.evaluate_research(state)
     
-    def finalize_answer(self, state: OverallState) -> Dict[str, Any]:
+    async def finalize_answer(self, state: OverallState) -> Dict[str, Any]:
         """
         LangGraph 節點：生成最終答案
         
-        整合所有信息並生成最終回覆。
+        基於所有可用的信息生成最終回答。
         """
         try:
             self.logger.info("finalize_answer: 生成最終答案")
             
-            # 獲取基礎信息
+            # 通知答案生成階段
+            await self._notify_progress(
+                stage="finalize_answer",
+                message="✍️ 正在整理答案...",
+                progress_percentage=90
+            )
+            
             messages = state.messages
-            tool_results = state.tool_results
-            research_topic = state.research_topic
+            tool_results = state.tool_results or []
             
-            if not messages:
-                return {"finished": True}
-            
-            # 準備答案生成的上下文
-            context_parts = []
-            
-            # 添加工具結果作為上下文
+            # 構建上下文
+            context = ""
             if tool_results:
-                context_parts.append("研究結果:")
-                for i, result in enumerate(tool_results[:5], 1):  # 限制最多5個結果
-                    context_parts.append(f"{i}. {result}")
-            
-            context = "\n".join(context_parts) if context_parts else ""
+                context = "\n".join([f"搜尋結果: {result}" for result in tool_results])
             
             # 生成最終答案
-            final_answer = self._generate_final_answer(messages, context)
+            try:
+                final_answer = self._generate_final_answer(messages, context)
+            except Exception as e:
+                self.logger.warning(f"LLM 答案生成失敗，使用基本回覆: {e}")
+                final_answer = self._generate_basic_fallback_answer(messages, context)
             
             self.logger.info("finalize_answer: 答案生成完成")
             
+            # 通知完成
+            await self._notify_progress(
+                stage="completed",
+                message="✅ 回答完成！",
+                progress_percentage=100
+            )
+            
             return {
                 "final_answer": final_answer,
-                "finished": True
+                "finished": True,
+                "sources": self._extract_sources_from_results(tool_results)
             }
             
         except Exception as e:
             self.logger.error(f"finalize_answer 失敗: {e}")
+            
+            # 通知錯誤
+            await self._notify_error(e)
+            
             return {
-                "final_answer": "抱歉，處理您的請求時發生錯誤。",
+                "final_answer": "抱歉，生成回答時發生錯誤。", 
                 "finished": True
             }
     
@@ -367,8 +407,7 @@ class UnifiedAgent:
     
     def _analyze_tool_necessity(self, messages: List[MsgNode]) -> bool:
         """分析是否需要使用工具（使用專用 LLM 智能判斷）"""
-        tool_analysis_llm = self.llm_instances.get("tool_analysis")
-        if not tool_analysis_llm:
+        if not self.tool_analysis_llm:
             return self._analyze_tool_necessity_fallback(messages)
         
         try:
@@ -396,7 +435,7 @@ class UnifiedAgent:
 請只回答「是」或「否」，不需要解釋。
 """
             
-            response = tool_analysis_llm.invoke(analysis_prompt)
+            response = self.tool_analysis_llm.invoke(analysis_prompt)
             result = response.content.strip().lower()
             
             needs_tools = "是" in result or "yes" in result or "需要" in result
@@ -421,36 +460,36 @@ class UnifiedAgent:
     
     def _generate_search_queries(self, messages: List[MsgNode]) -> List[str]:
         """生成搜尋查詢（基於完整對話歷史）"""
-        tool_analysis_llm = self.llm_instances.get("tool_analysis") # 仍使用此 LLM
-        if not tool_analysis_llm:
-            # 回退到簡化實作：直接使用最新用戶輸入作為查詢
-            return [messages[-1].content[:100]]
-        
         try:
-            # 構建包含所有歷史對話的提示
-            conversation_history = ""
+            self.logger.info("生成搜尋查詢（基於完整對話歷史）")
+            
+            # System instruction for the LLM
+            system_instruction = f"""
+            今日是 {get_current_date(self.config.get("system", {}).get("timezone", "Asia/Taipei"))}
+                你是一個網路搜尋查詢生成器。
+                你的任務是根據提供的對話歷史和最新一條用戶請求，生成 1-2 個精確的網路搜尋查詢。
+                請確保查詢能涵蓋用戶請求的最新資訊需求。
+
+                輸出格式：
+                請直接提供 JSON 格式的搜尋查詢列表。如果沒有需要搜尋的查詢，請回傳一個空的 JSON 列表 `[]`。
+
+                範例：
+                [ "查詢一", "查詢二" ]
+                或者，如果不需要查詢：
+                []
+                """
+            
+            messages_for_llm = [SystemMessage(content=system_instruction)]
+
+            # Add conversation history as individual messages
+            # Iterate in chronological order as LLM expects messages in order
             for msg in messages:
                 if msg.role == "user":
-                    conversation_history += f"用戶: {msg.content}\n"
+                    messages_for_llm.append(HumanMessage(content=msg.content))
                 elif msg.role == "assistant":
-                    conversation_history += f"初華: {msg.content}\n"
-
-            query_generation_prompt = f"""
-根據以下對話歷史，為最新一條用戶請求生成 1-2 個精確的網路搜尋查詢。請確保查詢能涵蓋用戶請求的最新資訊需求。
-
-對話歷史：
-{conversation_history}
-
-輸出格式：
-請直接提供 JSON 格式的搜尋查詢列表。如果沒有需要搜尋的查詢，請回傳一個空的 JSON 列表 `[]`。
-
-範例：
-[ "查詢一", "查詢二" ]
-或者，如果不需要查詢：
-[]
-"""
+                    messages_for_llm.append(AIMessage(content=msg.content))
             
-            response = tool_analysis_llm.invoke(query_generation_prompt)
+            response = self.tool_analysis_llm.invoke(messages_for_llm)
             raw_content = response.content.strip()
             
             parsed_json = None
@@ -494,7 +533,7 @@ class UnifiedAgent:
     def _execute_google_search(self, state: OverallState) -> List[str]:
         """執行 Google 搜尋（內嵌實作）"""
         if not self.google_client:
-            return ["Google 客戶端未配置，無法執行 Google 搜尋。"]
+            raise ValueError("Google 客戶端未配置，無法執行 Google 搜尋。")
         
         search_queries = state.search_queries
         self.logger.debug(f"DEBUG: _execute_google_search: search_queries type: {type(search_queries)}, value: {search_queries}")
@@ -502,7 +541,7 @@ class UnifiedAgent:
         
         try:
             for query in search_queries[:2]:  # 限制最多2個查詢
-                current_date = get_current_date()
+                current_date = get_current_date(timezone_str=self.config.get("system", {}).get("timezone", "Asia/Taipei"))
                 
                 # 準備傳遞給 Gemini 模型的提示
                 formatted_prompt = web_searcher_instructions.format(
@@ -605,63 +644,55 @@ class UnifiedAgent:
         latest_message = messages[-1]
         user_question = latest_message.content
         
-        # 嘗試使用專用的回答生成 LLM
-        final_answer_llm = self.llm_instances.get("final_answer")
-        
         # 不管有沒有context，都用LLM生成更自然的回應
-        if final_answer_llm:
-            try:
-                if context:
-                    # 有搜尋結果的情況
-                    answer_prompt = f"""
-你是一個友善、聰明的聊天助手。請用自然、人性化的方式回答用戶的問題。
+        try:
+            # 構建所有歷史對話的訊息列表，除了當前用戶問題
 
-用戶問題：{user_question}
-
-相關資訊：
-{context}
-
-回答要求：
-- 用輕鬆、友好的語調
-- 像朋友間聊天一樣自然
-- 可以適當使用表情符號
-- 回答要實用且容易理解
-- 表現出對用戶問題的關心和理解
-
-請提供一個溫暖、有幫助的回答：
-"""
-                else:
-                    # 一般聊天的情況
-                    answer_prompt = f"""
-                你是一個友善、聰明的聊天助手。請用自然、人性化的方式回答用戶的問題或與用戶對話。
-
-                用戶說：{user_question}
-
-                回答要求：
-                - 用輕鬆、友好的語調，像朋友間聊天
-                - 可以適當使用表情符號
-                - 直接回答問題或回應用戶的話題
-                - 表現出興趣和關心
-                - 如果是問題，盡力回答；如果是閒聊，友善回應
-                - 可以適當提出相關的後續問題來延續對話
-
-                請提供一個溫暖、自然的回應：
-                """
+            if context:
+                messages_for_final_answer = [SystemMessage(
+                    content=f"""
+                    你是一個友善、聰明的聊天助手。請用自然、人性化的方式回答用戶的問題。
+                    以下是你使用工具得到的相關資訊，請用於回答用戶的問題：
+                    {context}
+                    """
+                )]
+            else:
+                messages_for_final_answer = [SystemMessage(content="你是一個友善、聰明的聊天助手。請用自然、人性化的方式回答用戶的問題。")]
                 
-                response = final_answer_llm.invoke(answer_prompt)
-                return response.content.strip()
-                
-            except Exception as e:
-                self.logger.warning(f"使用 LLM 生成答案失敗: {e}")
+            for msg in messages[:-1]: # 除了最後一條消息（當前用戶問題）
+                if msg.role == "user":
+                    messages_for_final_answer.append(HumanMessage(content=msg.content))
+                elif msg.role == "assistant":
+                    messages_for_final_answer.append(AIMessage(content=msg.content))
+
+            # 將當前用戶問題作為 HumanMessage 加入
+            messages_for_final_answer.append(HumanMessage(content=user_question))
+            response = self.final_answer_llm.invoke(messages_for_final_answer)
+            return response.content.strip()
+            
+        except Exception as e:
+            self.logger.warning(f"使用 LLM 生成答案失敗: {e}")
         
-        # 回退到簡化邏輯 - 也要人性化
-        if context:
-            return f"關於你問的「{user_question}」，我找到了一些有用的資訊呢！✨\n\n{context}\n\n希望這些對你有幫助！還有什麼想了解的嗎？😊"
-        else:
-            return f"嗨！關於「{user_question}」，我很樂意和你聊聊～雖然我現在沒有額外的搜尋資訊，但我會盡我所知來回答你！😊 有什麼特別想聊的嗎？"
+        return self._generate_basic_fallback_answer(messages, context)
+
+    def _generate_basic_fallback_answer(self, messages: List[MsgNode], context: str) -> str:
+        return "出現錯誤，請再試一次 🔄"
+
+    def _extract_sources_from_results(self, tool_results: List[str]) -> List[Dict[str, str]]:
+        """從工具結果中提取來源信息"""
+        sources = []
+        if tool_results:
+            for result in tool_results:
+                if isinstance(result, str) and "http" in result:
+                    # 簡化的來源提取邏輯
+                    sources.append({
+                        "title": result[:100] + "..." if len(result) > 100 else result,
+                        "url": "",
+                        "snippet": result
+                    })
+        return sources
 
 
-# 便利函數
 
 def create_unified_agent(config: Optional[Dict[str, Any]] = None) -> UnifiedAgent:
     """建立統一 Agent 實例"""
