@@ -1,11 +1,12 @@
 import logging
 from typing import Dict, Any
+from schemas.config_types import AppConfig
 
 
-def setup_logger(cfg: Dict[str, Any]) -> None:
+def setup_logger(cfg: AppConfig) -> None:
     """根據給定設定初始化 logging 系統。"""
-    log_level = getattr(logging, cfg.get("log_level", "INFO"), logging.INFO)
-    log_format = cfg.get("log_format", "%(asctime)s %(levelname)s: %(message)s")
+    log_level = getattr(logging, cfg.system.log_level.upper(), logging.INFO)
+    log_format = "%(asctime)s %(levelname)s: %(message)s"
 
     # 移除既有 handler，避免其他套件 (如 discord.py) 影響
     for handler in logging.root.handlers[:]:

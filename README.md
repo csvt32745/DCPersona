@@ -26,8 +26,9 @@
 - [安裝與設定](#安裝與設定)
   - [1. 下載專案](#1-下載專案)
   - [2. 安裝依賴](#2-安裝依賴)
-  - [3. 複製並編輯設定檔](#3-複製並編輯設定檔)
-  - [4. 設定 Discord 與 API 金鑰](#4-設定-discord-與-api-金鑰)
+  - [3. 設定環境變數](#3-設定環境變數)
+  - [4. 複製並編輯設定檔](#4-複製並編輯設定檔)
+  - [5. 設定 Discord Bot](#5-設定-discord-bot)
 - [使用方法](#使用方法)
   - [啟動 Bot](#啟動-bot)
   - [Discord 互動方式](#discord-互動方式)
@@ -94,24 +95,29 @@ cd llmcord
 pip install -r requirements.txt
 ```
 
-### 3. 複製並編輯設定檔
+### 3. 設定環境變數
+
+```bash
+cp env.example .env
+```
+
+編輯 `.env` 文件，設定必要的 API 金鑰：
+
+```bash
+# Gemini API 金鑰 (必需)
+GEMINI_API_KEY=your_gemini_api_key_here
+```
+
+### 4. 複製並編輯設定檔
 
 ```bash
 cp config-example.yaml config.yaml
 ```
 
-### 4. 設定 Discord 與 API 金鑰
+### 5. 設定 Discord Bot
 
 - **Discord Bot Token**：於 [Discord Developer Portal](https://discord.com/developers/applications) 建立 Bot，取得 `bot_token` 與 `client_id`，並啟用 MESSAGE CONTENT INTENT。
-- **LLM API 金鑰**：於 `config.yaml` 設定各 LLM 服務的 API 金鑰（如 OpenAI、Gemini 等）。
-- **LangGraph 智能研究**：
-  ```yaml
-  langgraph:
-    enabled: true
-    gemini_api_key: "YOUR_GEMINI_API_KEY"
-    google_search_api_key: "YOUR_GOOGLE_SEARCH_API_KEY"
-    google_search_engine_id: "YOUR_GOOGLE_SEARCH_ENGINE_ID"
-  ```
+- **API 金鑰**：主要的 API 金鑰現在從 `.env` 文件讀取，確保安全性。
 
 詳細設定請參考 [`LANGGRAPH_INTEGRATION_GUIDE.md`](LANGGRAPH_INTEGRATION_GUIDE.md)。
 

@@ -6,7 +6,7 @@ Phase 2 進度更新功能測試
 
 import pytest
 import asyncio
-from unittest.mock import Mock, AsyncMock, patch
+from unittest.mock import Mock, AsyncMock, patch, mock_open
 from dataclasses import dataclass
 from typing import List, Dict, Any, Optional
 
@@ -199,64 +199,67 @@ def test_config_types():
 
 def test_config_loading():
     """測試配置載入功能"""
-    from utils.config_loader import load_config, load_typed_config
+    from utils.config_loader import load_typed_config
+    from schemas.config_types import AppConfig
     
-    # 測試字典格式載入（向後相容）
-    config_dict = load_config("config.yaml")
-    assert isinstance(config_dict, dict)
-    
-    # 測試型別安全配置載入
-    typed_config = load_typed_config("config.yaml")
-    # 注意：如果配置文件不存在，會返回預設配置
-    if typed_config:
-        assert hasattr(typed_config, 'agent')
-        assert hasattr(typed_config, 'discord')
+    # 測試配置載入
+    with patch('pathlib.Path.exists', return_value=True), \
+         patch('builtins.open', mock_open(read_data="""
+agent:
+  tools:
+    google_search:
+      enabled: true
+      priority: 1
+  behavior:
+    max_tool_rounds: 2
+""")), \
+         patch.dict('os.environ', {'GEMINI_API_KEY': 'test_key'}):
+        config = load_typed_config("test_config.yaml")
+        assert isinstance(config, AppConfig)
+        assert config.gemini_api_key == "test_key"
+        assert config.agent.behavior.max_tool_rounds == 2
 
 
 def test_unified_agent_with_progress():
-    """測試統一 Agent 支援進度更新"""
+    """測試統一 Agent 的進度功能"""
     from agent_core.graph import UnifiedAgent
     from agent_core.progress_observer import ProgressObserver, ProgressEvent
+    from schemas.config_types import AppConfig, AgentConfig, AgentBehaviorConfig
     
-    # 創建測試觀察者
-    class TestObserver(ProgressObserver):
-        def __init__(self):
-            self.events = []
+    # 創建測試配置
+    with patch.dict('os.environ', {'GEMINI_API_KEY': 'test_key'}):
+        test_config = AppConfig(
+            agent=AgentConfig(
+                behavior=AgentBehaviorConfig(max_tool_rounds=1)
+            )
+        )
         
-        async def on_progress_update(self, event: ProgressEvent) -> None:
-            self.events.append(event)
+        class TestObserver(ProgressObserver):
+            def __init__(self):
+                self.events = []
+                self.completions = []
+                self.errors = []
+            
+            async def on_progress_update(self, event: ProgressEvent) -> None:
+                self.events.append(event)
+            
+            async def on_completion(self, final_result: str, sources=None) -> None:
+                self.completions.append((final_result, sources))
+            
+            async def on_error(self, error: Exception) -> None:
+                self.errors.append(error)
         
-        async def on_completion(self, final_result: str, sources=None) -> None:
-            pass
-        
-        async def on_error(self, error: Exception) -> None:
-            pass
-    
-    # 創建 Agent（使用空配置避免依賴外部文件）
-    config = {
-        "gemini_api_key": "test_key",
-        "llm_models": {
-            "tool_analysis": {"model": "gemini-2.0-flash-exp", "temperature": 0.1},
-            "final_answer": {"model": "gemini-2.0-flash-exp", "temperature": 0.7}
-        },
-        "agent": {
-            "tools": {},
-            "behavior": {"max_tool_rounds": 0}
-        }
-    }
-    
-    with patch('agent_core.graph.ChatGoogleGenerativeAI'):
-        agent = UnifiedAgent(config)
-        observer = TestObserver()
-        
-        # 測試觀察者註冊
-        agent.add_progress_observer(observer)
-        assert len(agent._progress_observers) == 1
-        
-        # 測試 ProgressMixin 方法可用
-        assert hasattr(agent, '_notify_progress')
-        assert hasattr(agent, '_notify_completion')
-        assert hasattr(agent, '_notify_error')
+        with patch('agent_core.graph.ChatGoogleGenerativeAI'):
+            agent = UnifiedAgent(test_config)
+            observer = TestObserver()
+            
+            # 測試觀察者管理
+            agent.add_progress_observer(observer)
+            assert len(agent._progress_observers) == 1
+            
+            # 測試清除觀察者
+            agent.clear_progress_observers()
+            assert len(agent._progress_observers) == 0
 
 
 if __name__ == "__main__":

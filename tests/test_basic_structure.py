@@ -1,15 +1,17 @@
 import pathlib, sys, os
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
-from utils.config_loader import load_config
+from utils.config_loader import load_typed_config
 from utils.logger import setup_logger
 from schemas.agent_types import OverallState, MsgNode
+from schemas.config_types import AppConfig
 
 
 def test_load_config():
-    cfg = load_config("config.yaml")
-    assert isinstance(cfg, dict)
-    # 至少包含 agent 或 prompt_system 任一 key
-    assert any(k in cfg for k in ("agent", "prompt_system"))
+    cfg = load_typed_config("config.yaml")
+    assert isinstance(cfg, AppConfig)
+    # 檢查必要的配置屬性
+    assert hasattr(cfg, 'agent')
+    assert hasattr(cfg, 'gemini_api_key')
 
 
 def test_logger_setup(capsys):

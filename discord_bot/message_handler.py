@@ -12,9 +12,10 @@ import discord
 
 from agent_core.graph import create_unified_agent
 from schemas.agent_types import OverallState, MsgNode
-from utils.config_loader import load_config
+from utils.config_loader import load_typed_config
 from .progress_adapter import DiscordProgressAdapter
 from .message_collector import collect_message, CollectedMessages
+from schemas.config_types import AppConfig
 
 
 class DiscordMessageHandler:
@@ -23,22 +24,22 @@ class DiscordMessageHandler:
     統一的 Discord 訊息處理入口，使用新的統一 Agent 架構
     """
     
-    def __init__(self, config: Optional[Dict[str, Any]] = None):
+    def __init__(self, config: Optional[AppConfig] = None):
         """初始化 Discord 訊息處理器
         
         Args:
-            config: 配置字典，如果為 None 則載入預設配置
+            config: 型別安全的配置實例，如果為 None 則載入預設配置
         """
-        self.config = config or load_config()
+        self.config = config or load_typed_config()
         self.logger = logging.getLogger(__name__)
         
         # Agent 設定
-        self.agent_config = self.config.get("agent", {})
-        self.behavior_config = self.agent_config.get("behavior", {})
+        self.agent_config = self.config.agent
+        self.behavior_config = self.config.agent.behavior
         
         # Instead of test on handle message, test on init
         logging.info(f"Agent 測試初始化")
-        agent = create_unified_agent(self.config)
+        self.agent = create_unified_agent(self.config)
         
     async def handle_message(self, message: discord.Message) -> bool:
         """處理 Discord 訊息
@@ -56,14 +57,14 @@ class DiscordMessageHandler:
             
             self.logger.info(f"開始處理訊息: {message.content[:100]}...")
             
-            # 收集訊息歷史和上下文
+            # 收集訊息歷史和上下文 - 使用型別安全存取
             collected_messages = await collect_message(
                 new_msg=message,
                 discord_client_user=message.guild.me if message.guild else message.channel.me,
-                enable_conversation_history=self.config['discord']['enable_conversation_history'],
-                max_text=self.config.get("max_text", 4000),
-                max_images=self.config.get("max_images", 4),
-                max_messages=self.config.get("max_messages", 10)
+                enable_conversation_history=self.config.discord.enable_conversation_history,
+                max_text=self.config.discord.limits.max_text,
+                max_images=self.config.discord.limits.max_images,
+                max_messages=self.config.discord.limits.max_messages
             )
             
             # 使用統一 Agent 進行處理
@@ -213,7 +214,7 @@ class DiscordMessageHandler:
                 return False
             
             # 維護模式檢查
-            if self.config.get("is_maintainance", False):
+            if self.config.discord.maintenance.enabled:
                 asyncio.create_task(self._send_maintenance_message(message))
                 return False
             
@@ -234,92 +235,80 @@ class DiscordMessageHandler:
             bool: 是否有權限
         """
         try:
-            is_dm = getattr(message.channel, 'type', None) == discord.ChannelType.private
+            # 使用型別安全的配置存取
+            permissions = self.config.discord.permissions
+            allow_dms = permissions.allow_dms
             
-            # 獲取權限配置
-            permissions = self.config.get("permissions", {})
-            allow_dms = self.config.get("allow_dms", True)
+            # DM 權限檢查
+            is_dm = getattr(message.channel, 'type', None) == discord.ChannelType.private
+            if is_dm and not allow_dms:
+                asyncio.create_task(self._send_reject_message(message))
+                return False
             
             # 用戶權限檢查
-            user_perms = permissions.get("users", {})
+            user_perms = permissions.users
             allowed_user_ids = user_perms.get("allowed_ids", [])
             blocked_user_ids = user_perms.get("blocked_ids", [])
             
-            # 角色權限檢查（僅適用於群組）
-            role_ids = set()
-            if not is_dm and hasattr(message.author, "roles"):
-                try:
-                    roles = getattr(message.author, "roles", [])
-                    if hasattr(roles, '__iter__'):
-                        role_ids = set(getattr(role, 'id', 0) for role in roles)
-                except (TypeError, AttributeError):
-                    # Mock 或其他問題時，角色 ID 為空
-                    role_ids = set()
+            if blocked_user_ids and message.author.id in blocked_user_ids:
+                asyncio.create_task(self._send_reject_message(message))
+                return False
             
-            role_perms = permissions.get("roles", {})
-            allowed_role_ids = role_perms.get("allowed_ids", [])
-            blocked_role_ids = role_perms.get("blocked_ids", [])
+            if allowed_user_ids and message.author.id not in allowed_user_ids:
+                asyncio.create_task(self._send_reject_message(message))
+                return False
+            
+            # 角色權限檢查（僅限群組）
+            if not is_dm and hasattr(message, 'author') and hasattr(message.author, 'roles'):
+                role_perms = permissions.roles
+                allowed_role_ids = role_perms.get("allowed_ids", [])
+                blocked_role_ids = role_perms.get("blocked_ids", [])
+                
+                user_role_ids = [role.id for role in message.author.roles]
+                
+                if blocked_role_ids and any(role_id in blocked_role_ids for role_id in user_role_ids):
+                    asyncio.create_task(self._send_reject_message(message))
+                    return False
+                
+                if allowed_role_ids and not any(role_id in allowed_role_ids for role_id in user_role_ids):
+                    asyncio.create_task(self._send_reject_message(message))
+                    return False
             
             # 頻道權限檢查
-            channel_ids = set()
-            if not is_dm:
-                channel_ids.add(getattr(message.channel, 'id', 0))
-                if hasattr(message.channel, "parent_id") and getattr(message.channel, "parent_id", None):
-                    channel_ids.add(message.channel.parent_id)
-                if hasattr(message.channel, "category_id") and getattr(message.channel, "category_id", None):
-                    channel_ids.add(message.channel.category_id)
-            
-            channel_perms = permissions.get("channels", {})
+            channel_perms = permissions.channels
             allowed_channel_ids = channel_perms.get("allowed_ids", [])
             blocked_channel_ids = channel_perms.get("blocked_ids", [])
             
-            # 檢查用戶權限
-            user_id = getattr(message.author, 'id', 0)
-            if user_id in blocked_user_ids:
+            if blocked_channel_ids and message.channel.id in blocked_channel_ids:
+                asyncio.create_task(self._send_reject_message(message))
                 return False
             
-            if any(role_id in blocked_role_ids for role_id in role_ids):
+            if allowed_channel_ids and message.channel.id not in allowed_channel_ids:
+                asyncio.create_task(self._send_reject_message(message))
                 return False
-            
-            # 檢查頻道權限
-            if is_dm:
-                if not allow_dms:
-                    asyncio.create_task(self._send_reject_message(message))
-                    return False
-            else:
-                if any(channel_id in blocked_channel_ids for channel_id in channel_ids):
-                    return False
-                
-                # 如果設定了允許的頻道列表，檢查是否在列表中
-                if allowed_channel_ids and not any(channel_id in allowed_channel_ids for channel_id in channel_ids):
-                    return False
-            
-            # 檢查用戶是否在允許列表中（如果有設定的話）
-            if allowed_user_ids and user_id not in allowed_user_ids:
-                # 如果不在用戶允許列表中，檢查角色
-                if not any(role_id in allowed_role_ids for role_id in role_ids):
-                    return False
             
             return True
             
         except Exception as e:
-            self.logger.warning(f"檢查權限時發生錯誤: {e}")
-            # 在測試環境或出錯時，預設允許
+            self.logger.warning(f"權限檢查時發生錯誤: {e}")
+            # 出錯時預設允許
             return True
     
     async def _send_maintenance_message(self, message: discord.Message):
         """發送維護模式訊息"""
         try:
-            maintenance_msg = self.config.get('maintainance_resp', "Bot is currently in maintenance mode.")
-            await message.reply(content=maintenance_msg, suppress_embeds=True)
+            # 使用型別安全存取
+            maintenance_msg = self.config.discord.maintenance.message
+            await message.reply(maintenance_msg)
         except Exception as e:
             self.logger.error(f"發送維護訊息失敗: {e}")
     
     async def _send_reject_message(self, message: discord.Message):
         """發送拒絕訊息"""
         try:
-            reject_msg = self.config.get('reject_resp', "I'm not allowed to respond in this channel.")
-            await message.reply(content=reject_msg, suppress_embeds=True)
+            # 使用向後相容的配置欄位
+            reject_msg = self.config.reject_resp or "I'm not allowed to respond in this channel."
+            await message.reply(reject_msg)
         except Exception as e:
             self.logger.error(f"發送拒絕訊息失敗: {e}")
         
@@ -330,11 +319,11 @@ class DiscordMessageHandler:
 _message_handler: Optional[DiscordMessageHandler] = None
 
 
-def get_message_handler(config: Optional[Dict[str, Any]] = None) -> DiscordMessageHandler:
+def get_message_handler(config: Optional[AppConfig] = None) -> DiscordMessageHandler:
     """獲取訊息處理器實例（單例模式）
     
     Args:
-        config: 配置字典
+        config: 型別安全的配置實例
         
     Returns:
         DiscordMessageHandler: 訊息處理器實例
@@ -347,12 +336,12 @@ def get_message_handler(config: Optional[Dict[str, Any]] = None) -> DiscordMessa
     return _message_handler
 
 
-async def process_discord_message(message: discord.Message, config: Optional[Dict[str, Any]] = None) -> bool:
+async def process_discord_message(message: discord.Message, config: Optional[AppConfig] = None) -> bool:
     """處理 Discord 訊息的便利函數
     
     Args:
         message: Discord 訊息
-        config: 配置字典
+        config: 型別安全的配置實例
         
     Returns:
         bool: 是否成功處理

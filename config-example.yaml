@@ -1,6 +1,12 @@
 # llmcord 配置檔案範例
 # 使用新的型別化配置結構
 
+# ============================================================================
+# 環境變數設定
+# 請在 .env 文件中設定以下環境變數：
+# GEMINI_API_KEY=your_gemini_api_key_here
+# ============================================================================
+
 # 系統配置
 system:
   timezone: "Asia/Taipei"  # 時區設定
@@ -12,7 +18,7 @@ discord:
   bot_token: ""            # Discord Bot Token (必需)
   client_id: ""            # Discord Client ID (用於邀請連結)
   status_message: "AI Assistant"  # Bot 狀態訊息
-  enable_conversation_history: true
+  enable_conversation_history: false
   # 限制配置
   limits:
     max_text: 100000       # 最大文字長度
@@ -124,11 +130,3 @@ development:
   mock_research_responses: false # 模擬研究回應
   enable_mock_tools: false       # 啟用模擬工具
   test_mode: false              # 測試模式
-
-# ============================================================================
-# 向後相容性配置（保留舊格式支援）
-# 這些配置會被新的型別化配置覆蓋，但保留以確保相容性
-# ============================================================================
-
-# 向後相容性：舊的配置欄位
-gemini_api_key: ""       # 舊格式的 Gemini API 金鑰

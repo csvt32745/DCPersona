@@ -242,13 +242,12 @@ async def collect_message(
             break
     
     # 轉換為 MsgNode 格式
-    for processed_msg in processed_messages:
+    for processed_msg in processed_messages[::-1]:
         msg_node = MsgNode(
             role=processed_msg.role,
             content=processed_msg.content if isinstance(processed_msg.content, str) else str(processed_msg.content),
             metadata={"user_id": processed_msg.user_id} if processed_msg.user_id else {}
         )
-        print(msg_node)
         messages.append(msg_node)
     
     # 快取處理後的訊息到會話

@@ -11,6 +11,10 @@ from pathlib import Path
 from typing import Union, Dict, Any, Optional, List
 from datetime import datetime
 import pytz
+import os
+
+from utils.config_loader import load_typed_config
+from schemas.config_types import AppConfig
 
 # 常數
 ROOT_PROMPT_DIR = "persona"
@@ -270,21 +274,188 @@ def build_system_prompt(
 
 # ===== Agent 搜尋相關提示詞 =====
 
-def get_current_date(timezone_str: str = "Asia/Taipei"):
-    """取得當前日期的可讀格式，考慮傳入的時區設定"""
-    now = datetime.now(pytz.timezone(timezone_str))
-    return now.strftime("%B %d, %Y")
+def get_current_date(timezone_str: str = DEFAULT_TIMEZONE) -> str:
+    """獲取當前日期時間字串
+    
+    Args:
+        timezone_str: 時區字串
+        
+    Returns:
+        str: 格式化的日期時間字串
+    """
+    try:
+        tz = pytz.timezone(timezone_str)
+        now = datetime.now(tz)
+        return now.strftime("%Y年%m月%d日 %H:%M")
+    except Exception:
+        # 如果時區無效，使用預設時區
+        tz = pytz.timezone(DEFAULT_TIMEZONE)
+        now = datetime.now(tz)
+        return now.strftime("%Y年%m月%d日 %H:%M")
 
 
-web_searcher_instructions = """Conduct targeted Google Searches to gather the most recent, credible information on "{research_topic}" and synthesize it into a verifiable text artifact.
+def load_persona_files(persona_dir: str = "persona") -> Dict[str, str]:
+    """載入所有 persona 檔案
+    
+    Args:
+        persona_dir: persona 檔案目錄
+        
+    Returns:
+        Dict[str, str]: 檔案名稱到內容的映射
+    """
+    personas = {}
+    persona_path = Path(persona_dir)
+    
+    if not persona_path.exists():
+        logging.warning(f"Persona 目錄不存在: {persona_dir}")
+        return personas
+    
+    try:
+        for file_path in persona_path.glob("*.txt"):
+            try:
+                with open(file_path, 'r', encoding='utf-8') as f:
+                    content = f.read().strip()
+                    if content:
+                        personas[file_path.name] = content
+                        logging.debug(f"載入 persona: {file_path.name}")
+            except Exception as e:
+                logging.warning(f"載入 persona 檔案失敗 {file_path}: {e}")
+    except Exception as e:
+        logging.error(f"掃描 persona 目錄失敗: {e}")
+    
+    return personas
 
-Instructions:
-- Query should ensure that the most current information is gathered. The current date is {current_date}.
-- Conduct multiple, diverse searches to gather comprehensive information.
-- Consolidate key findings while meticulously tracking the source(s) for each specific piece of information.
-- The output should be a well-written summary or report based on your search findings. 
-- Only include the information found in the search results, don't make up any information.
 
-Research Topic:
-{research_topic}
+def get_system_prompt(config: Optional[AppConfig] = None) -> str:
+    """獲取系統提示詞
+    
+    Args:
+        config: 型別安全的配置實例
+        
+    Returns:
+        str: 系統提示詞
+    """
+    if config is None:
+        config = load_typed_config()
+    
+    try:
+        # 使用型別安全的配置存取
+        prompt_config = config.prompt_system
+        system_prompt_config = prompt_config.system_prompt
+        
+        # 檢查是否使用檔案
+        if system_prompt_config.use_file and system_prompt_config.file:
+            persona_file = system_prompt_config.file
+            
+            # 如果啟用隨機選擇
+            if prompt_config.persona.random_selection:
+                personas = load_persona_files()
+                if personas:
+                    # 隨機選擇一個 persona
+                    selected_file = random.choice(list(personas.keys()))
+                    selected_content = personas[selected_file]
+                    logging.info(f"隨機選擇 persona: {selected_file}")
+                    return selected_content
+                else:
+                    logging.warning("沒有找到 persona 檔案，使用預設檔案")
+            
+            # 載入指定檔案
+            persona_path = Path("persona") / persona_file
+            if persona_path.exists():
+                try:
+                    with open(persona_path, 'r', encoding='utf-8') as f:
+                        content = f.read().strip()
+                        if content:
+                            logging.info(f"載入系統提示詞檔案: {persona_file}")
+                            return content
+                except Exception as e:
+                    logging.error(f"載入系統提示詞檔案失敗 {persona_file}: {e}")
+        
+        # 使用回退提示詞
+        fallback_prompt = system_prompt_config.fallback
+        logging.info("使用回退系統提示詞")
+        return fallback_prompt
+        
+    except Exception as e:
+        logging.error(f"獲取系統提示詞失敗: {e}")
+        return "你是一個有用的 AI 助手。"
+
+
+def format_discord_context(
+    discord_context: Dict[str, Any], 
+    config: Optional[AppConfig] = None
+) -> str:
+    """格式化 Discord 上下文資訊
+    
+    Args:
+        discord_context: Discord 上下文字典
+        config: 型別安全的配置實例
+        
+    Returns:
+        str: 格式化的上下文字串
+    """
+    if config is None:
+        config = load_typed_config()
+    
+    try:
+        context_parts = []
+        
+        # 使用型別安全的配置存取
+        discord_integration = config.prompt_system.discord_integration
+        
+        # 添加時間戳
+        if discord_integration.include_timestamp:
+            current_time = get_current_date(config.system.timezone)
+            context_parts.append(f"當前時間: {current_time}")
+        
+        # 添加 Bot 資訊
+        bot_id = discord_context.get("bot_id")
+        if bot_id:
+            context_parts.append(f"你的 Discord ID: <@{bot_id}>")
+        
+        # 添加頻道資訊
+        channel_id = discord_context.get("channel_id")
+        if channel_id:
+            context_parts.append(f"當前頻道: <#{channel_id}>")
+        
+        # 添加伺服器資訊
+        guild_name = discord_context.get("guild_name")
+        if guild_name:
+            context_parts.append(f"伺服器: {guild_name}")
+        
+        # 添加提及資訊
+        if discord_integration.include_mentions:
+            mentions = discord_context.get("mentions", [])
+            if mentions:
+                mention_strs = [f"<@{user_id}>" for user_id in mentions]
+                context_parts.append(f"提及的用戶: {', '.join(mention_strs)}")
+        
+        return "\n".join(context_parts) if context_parts else ""
+        
+    except Exception as e:
+        logging.error(f"格式化 Discord 上下文失敗: {e}")
+        return ""
+
+
+# 工具相關的提示詞模板
+web_searcher_instructions = """作為一個網路搜尋專家，你的目標是：
+
+1. 分析用戶的問題，決定是否需要最新的資訊
+2. 如果需要搜尋，創建精確的搜尋關鍵詞
+3. 合并搜尋結果，提供準確且有用的回應
+
+研究主題: {research_topic}
+當前日期: {current_date}
+
+搜尋策略：
+- 使用明確、相關的關鍵詞
+- 避免太廣泛的搜尋詞
+- 考慮時間效應和地區效應
+- 優先選擇權威來源
+
+回應要求：
+- 根據搜尋結果提供準確的資訊
+- 標明資訊來源
+- 承認不確定性
+- 提供有用的後續建議
 """ 

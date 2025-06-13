@@ -8,6 +8,9 @@ from dataclasses import dataclass, field
 from typing import Dict, Any, List, Optional, Union
 from pathlib import Path
 import yaml
+import logging
+import os
+from dotenv import load_dotenv
 
 
 @dataclass
@@ -16,6 +19,24 @@ class ToolConfig:
     enabled: bool = False
     priority: int = 999
     config: Dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
+class StreamingConfig:
+    """串流配置"""
+    enabled: bool = True
+    chunk_size: int = 50  # 字符數
+    delay_ms: int = 50    # 毫秒延遲
+
+
+@dataclass 
+class ToolDescriptionConfig:
+    """工具描述配置"""
+    name: str
+    description: str
+    parameters: Dict[str, Any] = field(default_factory=dict)
+    enabled: bool = True
+    priority: int = 999
 
 
 @dataclass
@@ -73,6 +94,7 @@ class DiscordConfig:
     bot_token: str = ""
     client_id: str = ""
     status_message: str = "AI Assistant"
+    enable_conversation_history: bool = True
     limits: DiscordLimitsConfig = field(default_factory=DiscordLimitsConfig)
     permissions: DiscordPermissionsConfig = field(default_factory=DiscordPermissionsConfig)
     maintenance: DiscordMaintenanceConfig = field(default_factory=DiscordMaintenanceConfig)
@@ -140,6 +162,8 @@ class ProgressDiscordConfig:
     use_embeds: bool = True
     update_interval: int = 2  # 秒
     cleanup_delay: int = 30   # 完成後清理延遲
+    show_percentage: bool = True
+    show_eta: bool = False
 
 
 @dataclass
@@ -178,6 +202,11 @@ class DevelopmentConfig:
     test_mode: bool = False
 
 
+class ConfigurationError(Exception):
+    """配置錯誤異常"""
+    pass
+
+
 @dataclass
 class AppConfig:
     """應用程式總配置"""
@@ -188,21 +217,21 @@ class AppConfig:
     prompt_system: PromptSystemConfig = field(default_factory=PromptSystemConfig)
     progress: ProgressConfig = field(default_factory=ProgressConfig)
     development: DevelopmentConfig = field(default_factory=DevelopmentConfig)
+    streaming: StreamingConfig = field(default_factory=StreamingConfig)
     
-    # 向後相容性：保留舊的配置欄位
-    gemini_api_key: str = ""
-    llm_models: Dict[str, Dict[str, Any]] = field(default_factory=dict)
-    model: str = ""  # 舊格式的預設模型
-    bot_token: str = ""  # 舊格式的 bot_token
-    extra_api_parameters: Dict[str, Any] = field(default_factory=dict)
-    use_plain_responses: bool = False
-    is_maintainance: bool = False
-    reject_resp: str = ""
-    maintainance_resp: str = ""
-    is_random_system_prompt: bool = True
-    system_prompt_file: str = ""
-    system_prompt: str = ""
-    langgraph: Dict[str, Any] = field(default_factory=dict)
+    def __post_init__(self):
+        """初始化後處理，載入環境變數"""
+        # 載入 .env 文件
+        load_dotenv()
+        
+        # 從環境變數讀取 Gemini API Key
+        gemini_api_key = os.getenv('GEMINI_API_KEY')
+        if gemini_api_key:
+            # 設置到 LLM 提供商配置中
+            if 'google' not in self.llm.providers:
+                from schemas.config_types import LLMProviderConfig
+                self.llm.providers['google'] = LLMProviderConfig()
+            self.llm.providers['google'].api_key = gemini_api_key
     
     @classmethod
     def from_yaml(cls, config_path: str) -> 'AppConfig':
@@ -213,11 +242,76 @@ class AppConfig:
             
         Returns:
             AppConfig: 配置實例
+            
+        Raises:
+            ConfigurationError: 配置載入失敗時拋出
         """
-        with open(config_path, 'r', encoding='utf-8') as f:
-            data = yaml.safe_load(f)
+        try:
+            config_file = Path(config_path)
+            
+            if not config_file.exists():
+                logging.warning(f"配置檔案不存在: {config_path}，使用預設配置")
+                return cls()
+            
+            with open(config_path, 'r', encoding='utf-8') as f:
+                data = yaml.safe_load(f) or {}
+            
+            # 載入預設配置（如果存在）
+            config_dir = config_file.parent
+            example_path = config_dir / "config-example.yaml"
+            
+            default_data = {}
+            if example_path.exists():
+                try:
+                    with open(example_path, 'r', encoding='utf-8') as f:
+                        default_data = yaml.safe_load(f) or {}
+                    logging.debug(f"載入預設配置: {example_path}")
+                except Exception as e:
+                    logging.warning(f"載入預設配置失敗: {e}")
+            
+            # 合併配置
+            if default_data:
+                merged_data = cls._deep_merge(default_data, data)
+            else:
+                merged_data = data
+            
+            # 驗證配置
+            cls._validate_config(merged_data)
+            
+            return cls._dict_to_dataclass(merged_data, cls)
+            
+        except Exception as e:
+            logging.error(f"配置載入失敗: {e}")
+            raise ConfigurationError(f"無法載入配置 {config_path}: {e}")
+    
+    @staticmethod
+    def _deep_merge(base: Dict[str, Any], override: Dict[str, Any]) -> Dict[str, Any]:
+        """深度合併兩個字典"""
+        from copy import deepcopy
         
-        return cls._dict_to_dataclass(data, cls)
+        result = deepcopy(base)
+        for key, value in override.items():
+            if key in result and isinstance(result[key], dict) and isinstance(value, dict):
+                result[key] = AppConfig._deep_merge(result[key], value)
+            else:
+                result[key] = deepcopy(value)
+        return result
+    
+    @staticmethod
+    def _validate_config(data: Dict[str, Any]) -> None:
+        """驗證配置數據"""
+        if not isinstance(data, dict):
+            raise ConfigurationError("配置必須是字典格式")
+        
+        # 驗證必要的 API 金鑰（現在從環境變數讀取）
+        if not os.getenv('GEMINI_API_KEY'):
+            raise ConfigurationError("未設置 GEMINI_API_KEY 環境變數")
+        
+        # 驗證 Discord 配置
+        discord_config = data.get("discord", {})
+        if isinstance(discord_config, dict):
+            if not discord_config.get("bot_token"):
+                logging.warning("未設置 Discord bot_token，Discord 功能將無法使用")
     
     @classmethod
     def _dict_to_dataclass(cls, data: Dict[str, Any], dataclass_type):
@@ -240,6 +334,14 @@ class AppConfig:
         
         # 轉換數據
         converted_data = {}
+        # 定義已移除的向後兼容字段
+        deprecated_fields = {
+            'llm_models', 'model', 'bot_token', 
+            'extra_api_parameters', 'use_plain_responses', 'is_maintainance',
+            'reject_resp', 'maintainance_resp', 'is_random_system_prompt',
+            'system_prompt_file', 'system_prompt', 'langgraph'
+        }
+        
         for key, value in data.items():
             if key in field_types:
                 field_type = field_types[key]
@@ -260,9 +362,10 @@ class AppConfig:
                         converted_data[key] = value
                 else:
                     converted_data[key] = value
-            else:
-                # 未知字段，直接保留
+            elif key not in deprecated_fields:
+                # 未知字段但不是已棄用的字段，直接保留（向後相容性）
                 converted_data[key] = value
+            # 已棄用的字段會被忽略
         
         return dataclass_type(**converted_data)
     
@@ -357,4 +460,23 @@ class AppConfig:
         
         # 按優先級排序
         enabled_tools.sort(key=lambda x: x[1])
-        return [tool_name for tool_name, _ in enabled_tools] 
+        return [tool_name for tool_name, _ in enabled_tools]
+    
+    @property
+    def gemini_api_key(self) -> str:
+        """獲取 Gemini API Key（向後兼容性屬性）
+        
+        Returns:
+            str: Gemini API Key
+        """
+        # 優先從環境變數讀取
+        env_key = os.getenv('GEMINI_API_KEY')
+        if env_key:
+            return env_key
+        
+        # 從 LLM 提供商配置讀取
+        google_provider = self.llm.providers.get('google')
+        if google_provider and google_provider.api_key:
+            return google_provider.api_key
+        
+        return "" 

@@ -4,6 +4,7 @@ httpx
 openai
 pyyaml
 pytz
+python-dotenv
 
 # LangGraph core dependencies
 langgraph>=0.2.0

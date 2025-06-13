@@ -19,74 +19,72 @@ from langchain_core.runnables import RunnableConfig
 from google.genai import Client
 
 from schemas.agent_types import OverallState, MsgNode
-from utils.config_loader import load_config
+from utils.config_loader import load_typed_config
 from prompt_system.prompts import web_searcher_instructions, get_current_date
 from .agent_utils import resolve_urls, get_citations, insert_citation_markers
 from .progress_mixin import ProgressMixin
+from schemas.config_types import AppConfig
 
 
 class UnifiedAgent(ProgressMixin):
     """統一的 Agent 實作，根據配置動態調整行為"""
     
-    def __init__(self, config: Optional[Dict[str, Any]] = None):
+    def __init__(self, config: Optional[AppConfig] = None):
         """
         初始化統一 Agent
         
         Args:
-            config: 配置字典，如果為 None 則載入預設配置
+            config: 型別安全的配置實例，如果為 None 則載入預設配置
         """
         # 首先初始化 ProgressMixin
         super().__init__()
         
-        self.config = config or load_config()
+        self.config = config or load_typed_config()
         self.logger = logging.getLogger(__name__)
         
-        # 從配置獲取 agent 設定
-        self.agent_config = self.config.get("agent", {})
-        self.tools_config = self.agent_config.get("tools", {})
-        self.behavior_config = self.agent_config.get("behavior", {})
+        # 從配置獲取 agent 設定 - 使用型別安全存取
+        self.agent_config = self.config.agent
+        self.tools_config = self.config.agent.tools
+        self.behavior_config = self.config.agent.behavior
         
         # 初始化多個 LLM 實例
         self.llm_instances = self._initialize_llm_instances()
         
         # 初始化 Google 客戶端（如果工具啟用）
         self.google_client = None
-        if self.tools_config.get("google_search", {}).get("enabled", False):
-            api_key = self.config.get("gemini_api_key")
+        if self.config.is_tool_enabled("google_search"):
+            api_key = self.config.gemini_api_key
             if api_key:
                 self.google_client = Client(api_key=api_key)
     
     def _initialize_llm_instances(self) -> Dict[str, Optional[ChatGoogleGenerativeAI]]:
         """初始化不同用途的 LLM 實例"""
-        api_key = self.config.get("gemini_api_key")
+        api_key = self.config.gemini_api_key
         if not api_key:
-            raise ValueError("gemini_api_key is required in config")
+            raise ValueError("GEMINI_API_KEY environment variable is required")
         
-        llm_configs = None
-        if "llm" in self.config and "models" in self.config["llm"]:
-            llm_configs = self.config["llm"]["models"]
-        else:
-            # 提供預設配置
-            llm_configs = {
-                "tool_analysis": {"model": "gemini-2.0-flash-exp", "temperature": 0.1},
-                "final_answer": {"model": "gemini-2.0-flash-exp", "temperature": 0.7}
-            }
+        # 使用型別安全的配置存取
+        llm_configs_source = self.config.llm.models
         
         llm_instances = {}
-        for purpose, llm_config in llm_configs.items():
+        for purpose, llm_config in llm_configs_source.items():
             try:
+                # llm_config 現在總是 LLMModelConfig 實例
+                model_name = llm_config.model
+                temperature = llm_config.temperature
+                
                 llm_instances[purpose] = ChatGoogleGenerativeAI(
-                    model=llm_config.get("model", "gemini-2.0-flash-exp"),
-                    temperature=llm_config.get("temperature", 0.5),
+                    model=model_name,
+                    temperature=temperature,
                     api_key=api_key
                 )
-                self.logger.info(f"初始化 {purpose} LLM: {llm_config.get('model')}")
+                self.logger.info(f"初始化 {purpose} LLM: {model_name}")
             except Exception as e:
                 self.logger.warning(f"初始化 {purpose} LLM 失敗: {e}")
                 llm_instances[purpose] = None
         
-        self.tool_analysis_llm = llm_instances.get("tool_analysis")
-        self.final_answer_llm = llm_instances.get("final_answer")
+        self.tool_analysis_llm: ChatGoogleGenerativeAI = llm_instances.get("tool_analysis")
+        self.final_answer_llm: ChatGoogleGenerativeAI = llm_instances.get("final_answer")
         
         return llm_instances
     
@@ -105,8 +103,8 @@ class UnifiedAgent(ProgressMixin):
         # 設置流程邊緣
         builder.add_edge(START, "generate_query_or_plan")
         
-        # 根據配置決定流程
-        max_tool_rounds = self.behavior_config.get("max_tool_rounds", 0)
+        # 根據配置決定流程 - 使用型別安全存取
+        max_tool_rounds = self.behavior_config.max_tool_rounds
         
         if max_tool_rounds == 0:
             # 純對話模式：直接到最終答案
@@ -146,7 +144,7 @@ class UnifiedAgent(ProgressMixin):
             )
             
             user_content = state.messages[-1].content
-            max_tool_rounds = self.behavior_config.get("max_tool_rounds", 0)
+            max_tool_rounds = self.behavior_config.max_tool_rounds
             
             # 決定是否需要工具
             needs_tools = False
@@ -187,14 +185,14 @@ class UnifiedAgent(ProgressMixin):
             
             available_tools = []
             
-            # 根據優先級排序工具
+            # 根據優先級排序工具 - 使用型別安全存取
             tools_by_priority = sorted(
                 self.tools_config.items(),
-                key=lambda x: x[1].get("priority", 999)
+                key=lambda x: x[1].priority
             )
             
             for tool_name, tool_config in tools_by_priority:
-                if tool_config.get("enabled", False):
+                if tool_config.enabled:
                     # 檢查工具是否真的可用
                     if tool_name == "google_search" and self.google_client:
                         available_tools.append(tool_name)
@@ -238,7 +236,7 @@ class UnifiedAgent(ProgressMixin):
             
             # 計算進度百分比
             current_round = state.tool_round + 1
-            max_rounds = self.behavior_config.get("max_tool_rounds", 1)
+            max_rounds = self.behavior_config.max_tool_rounds
             progress_percentage = int((current_round / max_rounds) * 50)  # 工具執行佔總進度的50%
             
             # 通知工具執行進度
@@ -289,7 +287,7 @@ class UnifiedAgent(ProgressMixin):
         評估工具結果的質量和完整性。
         """
         try:
-            if not self.behavior_config.get("enable_reflection", True):
+            if not self.behavior_config.enable_reflection:
                 # 如果禁用反思，直接認為結果充分
                 return {"is_sufficient": True}
             
@@ -327,7 +325,7 @@ class UnifiedAgent(ProgressMixin):
         """
         try:
             current_round = state.tool_round
-            max_rounds = self.behavior_config.get("max_tool_rounds", 1)
+            max_rounds = self.behavior_config.max_tool_rounds
             is_sufficient = state.is_sufficient
             
             # 決策邏輯
@@ -412,18 +410,8 @@ class UnifiedAgent(ProgressMixin):
         
         try:
             # 構建包含所有歷史對話的提示
-            conversation_history = ""
-            for msg in messages:
-                if msg.role == "user":
-                    conversation_history += f"用戶: {msg.content}\n"
-                elif msg.role == "assistant":
-                    conversation_history += f"初華: {msg.content}\n"
-
-            analysis_prompt = f"""
+            messages_for_llm = [SystemMessage(content="""
 請分析以下對話歷史，判斷最新一條用戶請求是否需要使用搜尋工具來獲取最新資訊：
-
-對話歷史：
-{conversation_history}
 
 判斷標準：
 - 最新用戶請求需要最新資訊、即時數據、新聞事件
@@ -433,9 +421,15 @@ class UnifiedAgent(ProgressMixin):
 - 最新用戶請求是之前問題的延伸或補充，且需要搜尋來回答。
 
 請只回答「是」或「否」，不需要解釋。
-"""
+""")]
             
-            response = self.tool_analysis_llm.invoke(analysis_prompt)
+            for msg in messages:
+                if msg.role == "user":
+                    messages_for_llm.append(HumanMessage(content=msg.content))
+                elif msg.role == "assistant":
+                    messages_for_llm.append(AIMessage(content=msg.content))
+
+            response = self.tool_analysis_llm.invoke(messages_for_llm)
             result = response.content.strip().lower()
             
             needs_tools = "是" in result or "yes" in result or "需要" in result
@@ -465,7 +459,7 @@ class UnifiedAgent(ProgressMixin):
             
             # System instruction for the LLM
             system_instruction = f"""
-            今日是 {get_current_date(self.config.get("system", {}).get("timezone", "Asia/Taipei"))}
+            今日是 {get_current_date(self.config.system.timezone)}
                 你是一個網路搜尋查詢生成器。
                 你的任務是根據提供的對話歷史和最新一條用戶請求，生成 1-2 個精確的網路搜尋查詢。
                 請確保查詢能涵蓋用戶請求的最新資訊需求。
@@ -484,6 +478,7 @@ class UnifiedAgent(ProgressMixin):
             # Add conversation history as individual messages
             # Iterate in chronological order as LLM expects messages in order
             for msg in messages:
+                print(msg.role, msg.content[:100])
                 if msg.role == "user":
                     messages_for_llm.append(HumanMessage(content=msg.content))
                 elif msg.role == "assistant":
@@ -541,7 +536,7 @@ class UnifiedAgent(ProgressMixin):
         
         try:
             for query in search_queries[:2]:  # 限制最多2個查詢
-                current_date = get_current_date(timezone_str=self.config.get("system", {}).get("timezone", "Asia/Taipei"))
+                current_date = get_current_date(timezone_str=self.config.system.timezone)
                 
                 # 準備傳遞給 Gemini 模型的提示
                 formatted_prompt = web_searcher_instructions.format(
@@ -549,15 +544,8 @@ class UnifiedAgent(ProgressMixin):
                     current_date=current_date
                 )
                 
-                # 使用專用的工具分析 LLM 進行搜尋
-                tool_llm = self.llm_instances.get("tool_analysis")
-                if not tool_llm:
-                    results.append("搜尋 LLM 未配置，無法執行 Google 搜尋。")
-                    continue
-
                 try:
-                    tool_llm_config = self.config.get("llm_models", {}).get("tool_analysis", {})
-                    model_name = tool_llm_config.get("model", "gemini-2.0-flash-exp")
+                    model_name = self.tool_analysis_llm.model
                     # 調用 Gemini API 並啟用 google_search 工具
                     response = self.google_client.models.generate_content(
                         model=model_name,
@@ -597,6 +585,8 @@ class UnifiedAgent(ProgressMixin):
                             # 確認這裡不再有對列表類型的檢查，因為 get_citations 內部會處理
                         except Exception as cite_e:
                             self.logger.warning(f"獲取引用失敗: {cite_e}")
+                            import traceback
+                            print(traceback.format_exc())
                             citations = []
 
                         # 插入引用標記
@@ -694,12 +684,12 @@ class UnifiedAgent(ProgressMixin):
 
 
 
-def create_unified_agent(config: Optional[Dict[str, Any]] = None) -> UnifiedAgent:
+def create_unified_agent(config: Optional[AppConfig] = None) -> UnifiedAgent:
     """建立統一 Agent 實例"""
     return UnifiedAgent(config)
 
 
-def create_agent_graph(config: Optional[Dict[str, Any]] = None) -> StateGraph:
+def create_agent_graph(config: Optional[AppConfig] = None) -> StateGraph:
     """建立並編譯 Agent 圖"""
     agent = create_unified_agent(config)
     return agent.build_graph() 

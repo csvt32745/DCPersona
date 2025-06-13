@@ -127,6 +127,7 @@ def get_citations(response, resolved_urls_map):
         not hasattr(candidate, "grounding_metadata")
         or not candidate.grounding_metadata
         or not hasattr(candidate.grounding_metadata, "grounding_supports")
+        or not candidate.grounding_metadata.grounding_supports
     ):
         return citations
 
@@ -156,6 +157,8 @@ def get_citations(response, resolved_urls_map):
         if (
             hasattr(support, "grounding_chunk_indices")
             and support.grounding_chunk_indices
+            and hasattr(candidate.grounding_metadata, "grounding_chunks")
+            and candidate.grounding_metadata.grounding_chunks
         ):
             for ind in support.grounding_chunk_indices:
                 try:

@@ -11,26 +11,39 @@ import os
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 from agent_core.graph import UnifiedAgent, create_unified_agent, create_agent_graph
 from schemas.agent_types import OverallState, MsgNode
+from schemas.config_types import AppConfig, AgentConfig, AgentBehaviorConfig, LLMConfig, ToolConfig
 
 
 def get_test_config(agent_config=None):
-    """取得測試用的標準配置"""
-    base_config = {
-        "gemini_api_key": "test_key",
-        "llm_models": {
-            "tool_analysis": {"model": "gemini-2.0-flash-exp", "temperature": 0.1},
-            "final_answer": {"model": "gemini-2.0-flash-exp", "temperature": 0.7}
-        },
-        "agent": {
-            "tools": {},
-            "behavior": {"max_tool_rounds": 1}
+    """創建測試用的配置"""
+    base_agent_config = {
+        "tools": {},
+        "behavior": {
+            "max_tool_rounds": 1,
+            "timeout_per_round": 30,
+            "enable_reflection": True,
+            "enable_progress": True
         }
     }
     
     if agent_config:
-        base_config["agent"].update(agent_config)
+        base_agent_config.update(agent_config)
     
-    return base_config
+    # 處理工具配置
+    tools_dict = {}
+    for tool_name, tool_config in base_agent_config["tools"].items():
+        if isinstance(tool_config, dict):
+            tools_dict[tool_name] = ToolConfig(**tool_config)
+        else:
+            tools_dict[tool_name] = tool_config
+    
+    with patch.dict('os.environ', {'GEMINI_API_KEY': 'test_key'}):
+        return AppConfig(
+            agent=AgentConfig(
+                tools=tools_dict,
+                behavior=AgentBehaviorConfig(**base_agent_config["behavior"])
+            )
+        )
 
 
 class TestUnifiedAgent:
@@ -47,22 +60,15 @@ class TestUnifiedAgent:
             agent = UnifiedAgent(config)
             
             assert agent.config == config
-            assert agent.agent_config == config["agent"]
-            assert agent.tools_config == config["agent"]["tools"]
-            assert agent.behavior_config == config["agent"]["behavior"]
+            assert agent.agent_config == config.agent
+            assert agent.tools_config == config.agent.tools
+            assert agent.behavior_config == config.agent.behavior
     
     def test_agent_creation_with_default_config(self):
         """測試使用預設配置創建 Agent"""
-        with patch('agent_core.graph.load_config') as mock_load_config, \
+        with patch('agent_core.graph.load_typed_config') as mock_load_config, \
              patch('agent_core.graph.ChatGoogleGenerativeAI'):
-            mock_load_config.return_value = {
-                "gemini_api_key": "test_key",
-                "llm_models": {
-                    "tool_analysis": {"model": "gemini-2.0-flash-exp", "temperature": 0.1},
-                    "final_answer": {"model": "gemini-2.0-flash-exp", "temperature": 0.7}
-                },
-                "agent": {"tools": {}, "behavior": {}}
-            }
+            mock_load_config.return_value = get_test_config()
             
             agent = UnifiedAgent()
             
@@ -423,7 +429,7 @@ class TestUnifiedAgent:
 
 def test_create_unified_agent():
     """測試便利函數 create_unified_agent"""
-    with patch('agent_core.graph.load_config') as mock_load_config, \
+    with patch('agent_core.graph.load_typed_config') as mock_load_config, \
          patch('agent_core.graph.ChatGoogleGenerativeAI'):
         mock_load_config.return_value = get_test_config()
         

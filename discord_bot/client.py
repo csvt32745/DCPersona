@@ -10,60 +10,48 @@ from typing import Dict, Any, Optional
 
 from utils.config_loader import load_config, load_typed_config
 from .message_handler import get_message_handler
+from schemas.config_types import AppConfig
 
 
-def create_discord_client(cfg: Optional[Dict[str, Any]] = None) -> discord.Client:
+def create_discord_client(config: Optional[AppConfig] = None) -> discord.Client:
     """
     創建和配置 Discord 客戶端實例
     
     Args:
-        cfg: 配置字典，如果為 None 則載入預設配置
+        config: 型別安全的配置實例
         
     Returns:
         discord.Client: 配置好的 Discord 客戶端實例
     """
-    if cfg is None:
-        cfg = load_config()
+    if config is None:
+        config = load_typed_config()
     
     # 設定 Discord 意圖
     intents = discord.Intents.default()
     intents.message_content = True
+    intents.guilds = True
+    intents.guild_messages = True
+    # 檢查是否支援 direct_messages 屬性
+    if hasattr(intents, 'direct_messages'):
+        intents.direct_messages = True
+    elif hasattr(intents, 'dm_messages'):
+        intents.dm_messages = True
     
     # 設定狀態訊息
-    status_message = cfg.get("status_message", "AI Assistant")
-    if isinstance(cfg.get("discord"), dict):
-        status_message = cfg["discord"].get("status_message", status_message)
-    
-    activity = discord.CustomActivity(name=status_message[:128])
+    status_message = config.discord.status_message
     
     # 創建 Discord 客戶端
-    discord_client = discord.Client(intents=intents, activity=activity)
+    discord_client = discord.Client(intents=intents)
     
     # 記錄客戶端 ID 以供邀請 URL
-    client_id = cfg.get("client_id")
-    if isinstance(cfg.get("discord"), dict):
-        client_id = cfg["discord"].get("client_id", client_id)
+    client_id = config.discord.client_id
     
     if client_id:
-        invite_url = f"https://discord.com/api/oauth2/authorize?client_id={client_id}&permissions=412317273088&scope=bot"
+        invite_url = f"https://discord.com/api/oauth2/authorize?client_id={client_id}&permissions=2048&scope=bot"
         logging.info(f"\n\n🔗 BOT 邀請連結:\n{invite_url}\n")
     
-    return discord_client
-
-
-def register_handlers(discord_client: discord.Client, cfg: Optional[Dict[str, Any]] = None):
-    """
-    註冊 Discord 事件處理器
-    
-    Args:
-        discord_client: Discord 客戶端實例
-        cfg: 配置字典，如果為 None 則載入預設配置
-    """
-    if cfg is None:
-        cfg = load_config()
-    
-    # 獲取訊息處理器
-    message_handler = get_message_handler(cfg)
+    # 創建訊息處理器
+    message_handler = get_message_handler(config)
     
     # 統計數據
     _handler_stats = {
@@ -89,6 +77,10 @@ def register_handlers(discord_client: discord.Client, cfg: Optional[Dict[str, An
                 logging.info(f"🔧 已啟用的工具: {', '.join(enabled_tools)}")
             else:
                 logging.info("💬 純對話模式（無工具啟用）")
+        
+        # 設置 Bot 狀態
+        activity = discord.Game(name=status_message)
+        await discord_client.change_presence(activity=activity)
         
         logging.info("✅ Discord Bot 已準備就緒！")
     
@@ -133,27 +125,9 @@ def register_handlers(discord_client: discord.Client, cfg: Optional[Dict[str, An
     # 將統計函數附加到客戶端，方便存取
     discord_client.get_handler_stats = get_handler_stats
     
+    # 將訊息處理器附加到客戶端以便外部存取
+    discord_client.message_handler = message_handler
+    
     logging.info("🎯 Discord 事件處理器已註冊")
-
-
-# 便利函數，提供與 main.py 一致的介面
-def create_and_register_discord_bot(cfg: Optional[Dict[str, Any]] = None) -> discord.Client:
-    """
-    創建並註冊 Discord Bot 的便利函數
     
-    Args:
-        cfg: 配置字典，如果為 None 則載入預設配置
-        
-    Returns:
-        discord.Client: 已註冊處理器的 Discord 客戶端
-    """
-    if cfg is None:
-        cfg = load_config()
-    
-    # 創建客戶端
-    client = create_discord_client(cfg)
-    
-    # 註冊處理器
-    register_handlers(client, cfg)
-    
-    return client 
+    return discord_client
