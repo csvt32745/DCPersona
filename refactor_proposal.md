@@ -1,4 +1,4 @@
-# llmcord 專案重構提案 (更新版)
+# DCPersona 專案重構提案 (更新版)
 
 ---
 
@@ -36,7 +36,7 @@
 ## 3. 新專案架構設計
 
 ```
-llmcord/
+DCPersona/
 │
 ├── main.py                  # 程式主入口
 ├── config.yaml              # 系統設定檔

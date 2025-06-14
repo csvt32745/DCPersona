@@ -1,1 +1,1 @@
-"""Utilities package for llmcord refactored version.""" 
+"""Utilities package for DCPersona refactored version.""" 

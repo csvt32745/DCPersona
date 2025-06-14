@@ -1,5 +1,5 @@
 """
-LLMCord 主程式
+DCPersona 主程式
 
 Discord Bot 的主要入口點，負責初始化和啟動 Bot。
 """
@@ -20,7 +20,7 @@ load_dotenv()
 
 async def main():
     """
-    llmcord 應用程式主要入口點
+    DCPersona 應用程式主要入口點
     
     Args:
         config: 型別安全的配置實例
@@ -29,7 +29,7 @@ async def main():
     
     # 設置日誌
     setup_logger(config)
-    logging.info("🚀 llmcord 應用程式啟動中...")
+    logging.info("🚀 DCPersona 應用程式啟動中...")
 
     # 獲取 Bot Token
     bot_token = config.discord.bot_token
@@ -60,7 +60,7 @@ async def main():
         logging.info(f"📊 處理統計: 處理訊息 {stats.get('messages_processed', 0)} 條，"
                     f"錯誤 {stats.get('errors_occurred', 0)} 次")
         
-    logging.info("✅ LLMCord 已成功關閉")
+    logging.info("✅ DCPersona 已成功關閉")
 
 
 if __name__ == "__main__":

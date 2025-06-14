@@ -1,1 +1,1 @@
-"""Schemas package for llmcord refactored version.""" 
+"""Schemas package for DCPersona refactored version.""" 

@@ -1,19 +1,9 @@
 <h1 align="center">
-  llmcord
+  DCPersona
 </h1>
 
-<p align="center">
-  <img src="https://github.com/jakobdylanc/llmcord/assets/38699060/789d49fe-ef5c-470e-b60e-48ac03057443" alt="llmcord banner">
-</p>
-
-<p align="center">
-  <a href="https://github.com/jakobdylanc/llmcord/actions"><img src="https://img.shields.io/github/workflow/status/jakobdylanc/llmcord/CI?style=flat-square" alt="CI"></a>
-  <a href="https://github.com/jakobdylanc/llmcord/stargazers"><img src="https://img.shields.io/github/stars/jakobdylanc/llmcord?style=flat-square" alt="Stars"></a>
-  <a href="https://github.com/jakobdylanc/llmcord/blob/main/LICENSE.md"><img src="https://img.shields.io/github/license/jakobdylanc/llmcord?style=flat-square" alt="License"></a>
-</p>
-
 <h3 align="center"><i>
-  Discord × LLM × 智能研究 × 互動體驗
+  Discord × LangGraph × 統一 Agent × 多模態智能對話
 </i></h3>
 
 ---
@@ -22,7 +12,12 @@
 
 - [目錄](#目錄)
 - [專案簡介](#專案簡介)
-- [功能特色](#功能特色)
+- [核心特色](#核心特色)
+  - [🤖 統一 Agent 架構](#-統一-agent-架構)
+  - [🔧 型別安全設計](#-型別安全設計)
+  - [🌐 多模態支援](#-多模態支援)
+  - [⚡ 即時體驗](#-即時體驗)
+  - [🛠️ 靈活架構](#️-靈活架構)
 - [安裝與設定](#安裝與設定)
   - [1. 下載專案](#1-下載專案)
   - [2. 安裝依賴](#2-安裝依賴)
@@ -30,53 +25,53 @@
   - [4. 複製並編輯設定檔](#4-複製並編輯設定檔)
   - [5. 設定 Discord Bot](#5-設定-discord-bot)
 - [使用方法](#使用方法)
-  - [啟動 Bot](#啟動-bot)
+  - [啟動 Discord Bot](#啟動-discord-bot)
+  - [CLI 測試介面](#cli-測試介面)
   - [Discord 互動方式](#discord-互動方式)
-    - [範例](#範例)
-- [專案結構](#專案結構)
-- [貢獻與支援](#貢獻與支援)
-- [Star History](#star-history)
+- [專案架構](#專案架構)
+- [配置系統](#配置系統)
+  - [配置特色](#配置特色)
+- [測試](#測試)
+  - [執行測試](#執行測試)
+  - [測試覆蓋](#測試覆蓋)
+- [部署](#部署)
+  - [Docker 部署](#docker-部署)
 
 ---
 
 ## 專案簡介
 
-**llmcord** 將 Discord 變身為強大的 LLM 互動與智能研究平台。支援多種 LLM（OpenAI、Gemini、Ollama 等），並整合 LangGraph 智能研究系統，能根據問題自動切換簡單問答或多步驟研究模式，提供即時進度回報與多輪對話體驗。
+**DCPersona** 是一個現代化的 Discord AI 助手，採用統一 Agent 架構和型別安全設計。基於 LangGraph 的智能工作流程，支援多模態輸入（文字、圖片）、智能工具決策和即時串流回應，為使用者提供流暢且智能的對話體驗。
 
 ---
 
-## 功能特色
+## 核心特色
 
-- **🌟 LangGraph 智能研究整合**
-  - 自動判斷問題複雜度，啟動多步驟研究
-  - 支援 `!research` 等關鍵字強制進入研究模式
-  - 研究過程即時進度回報，30 秒超時自動降級
-  - Discord 會話與研究狀態綁定，支援多輪追問
+### 🤖 統一 Agent 架構
+- **配置驅動**: 透過 `config.yaml` 動態調整 Agent 行為
+- **智能決策**: 根據問題複雜度自動選擇工具和策略
+- **LangGraph 整合**: 多步驟推理與工具協調
+- **多輪對話**: 完整的對話上下文管理
 
-- **💬 多樣 LLM 支援**
-  - OpenAI、xAI、Mistral、Groq、OpenRouter、Gemini、Ollama、LM Studio、vLLM 等
-  - 支援 OpenAI API 相容服務
+### 🔧 型別安全設計
+- **完全型別安全**: 消除字串 key 存取，使用 dataclass 配置
+- **配置驗證**: 啟動時自動檢查配置完整性
+- **IDE 支援**: 完整的 IntelliSense 和自動完成
 
-- **🔗 附件與多模態**
-  - 支援圖片（vision model）、文字檔案等附件
-  - 可自訂系統人格（persona）
+### 🌐 多模態支援
+- **圖片理解**: 支援 Discord 圖片輸入和 Vision 模型
+- **文件處理**: 自動處理文字附件
+- **結構化內容**: 標準化的多模態內容處理
 
-- **⚡ 即時互動優化**
-  - 研究啟動時顯示「🔍 正在進行深度研究...」
-  - 每階段自動更新進度
-  - 進度更新與降級機制，確保流暢體驗
+### ⚡ 即時體驗
+- **串流回應**: 逐字串流回應，即時進度更新
+- **進度系統**: 觀察者模式的解耦進度管理
+- **錯誤處理**: 優雅的降級和錯誤恢復機制
 
-- **🧠 複雜度評估與模式切換**
-  - 自動評估問題複雜度，智慧切換回應流程
-  - 可自訂複雜度閾值與觸發關鍵字
-
-- **🛡️ 高效狀態管理**
-  - 會話自動清理、狀態持久化
-  - 多用戶多會話並行
-
-- **🧪 完善測試與模組化架構**
-  - agents/ 智能代理模組
-  - tests/ 單元與整合測試
+### 🛠️ 靈活架構
+- **模組化設計**: 清晰的職責分離和低耦合
+- **平台無關**: Discord 和 CLI 雙模式支援
+- **易於擴展**: 標準化的工具和模組介面
 
 ---
 
@@ -85,8 +80,8 @@
 ### 1. 下載專案
 
 ```bash
-git clone https://github.com/jakobdylanc/llmcord
-cd llmcord
+git clone https://github.com/csvt32745/DCPersona
+cd DCPersona
 ```
 
 ### 2. 安裝依賴
@@ -116,122 +111,155 @@ cp config-example.yaml config.yaml
 
 ### 5. 設定 Discord Bot
 
-- **Discord Bot Token**：於 [Discord Developer Portal](https://discord.com/developers/applications) 建立 Bot，取得 `bot_token` 與 `client_id`，並啟用 MESSAGE CONTENT INTENT。
-- **API 金鑰**：主要的 API 金鑰現在從 `.env` 文件讀取，確保安全性。
-
-詳細設定請參考 [`LANGGRAPH_INTEGRATION_GUIDE.md`](LANGGRAPH_INTEGRATION_GUIDE.md)。
+- 於 [Discord Developer Portal](https://discord.com/developers/applications) 建立 Bot
+- 取得 `bot_token` 並設定到 `config.yaml` 文件
+- 啟用 **MESSAGE CONTENT INTENT**
+- 配置 Bot 權限和頻道存取
 
 ---
 
 ## 使用方法
 
-### 啟動 Bot
+### 啟動 Discord Bot
 
 ```bash
 python main.py
 ```
+
 或使用 Docker：
 ```bash
 docker compose up
 ```
 
-### Discord 互動方式
+### CLI 測試介面
 
-- **自動模式切換**：Bot 會根據訊息自動判斷是否進入研究模式
-- **強制研究模式**：訊息前綴 `!research` 強制啟動多步驟研究
-- **多輪對話**：支援基於會話的多輪追問與延續
-
-#### 範例
-
-- 簡單問答：
-  ```
-  用戶: 你好嗎？
-  初華: 我很好呢 ✨ 謝謝妳的關心...
-  ```
-- 複雜研究：
-  ```
-  用戶: !research 請分析 2024 年 AI 發展趨勢
-  初華: 🔍 讓我為妳進行深度研究...
-  初華: 🤔 正在思考最佳的搜尋策略...
-  初華: 📚 正在收集相關資料... (1/2)
-  初華: 📝 正在整理答案... 馬上就好了 ✨
-  初華: 根據我的研究，2024年AI發展呈現以下趨勢...
-  ```
-
----
-
-## 專案結構
-
-```plaintext
-llmcord/
-│
-├── main.py                  # 主程式入口
-├── config.yaml              # 系統設定檔
-├── persona/                 # 系統提示詞
-│
-├── core/
-│   ├── config.py            # 設定管理
-│   ├── logger.py            # 日誌系統
-│   ├── utils.py             # 通用工具
-│   └── session_manager.py   # 會話與狀態管理
-│
-├── agents/
-│   ├── configuration.py     # 智能代理組態
-│   ├── prompts.py           # 代理提示詞
-│   ├── research_agent.py    # 研究型代理
-│   ├── state.py             # 狀態管理
-│   ├── tools_and_schemas.py # 工具與資料結構
-│   └── utils.py             # 代理輔助工具
-│
-├── discordbot/
-│   ├── client.py            # Discord client 初始化
-│   ├── message_handler.py   # 訊息處理主流程
-│   └── msg_node.py          # 訊息快取
-│
-├── pipeline/
-│   ├── collector.py         # 訊息收集與預處理
-│   ├── rag.py               # RAG 流程與 LangGraph 整合
-│   ├── llm.py               # LLM 輸入組裝
-│   └── postprocess.py       # 回覆後處理
-│
-├── tools/
-│   └── google_search.py     # Google Search 工具
-│
-├── tests/
-│   ├── test_progress_update.py
-│   ├── test_embed_integration.py
-│   ├── test_complexity_assessment.py
-│   ├── test_integration.py
-│   └── test_llm_complexity_integration.py
-│
-├── LANGGRAPH_INTEGRATION_GUIDE.md   # LangGraph 整合指南
-├── llmcord_structure.md             # 專案結構說明
-├── llmcord.py                       # 主要邏輯入口
-├── README.md                        # 專案說明
-├── requirements.txt                 # 依賴套件列表
-└── ...（其他文件略）
+```bash
+python cli_main.py
 ```
 
----
+CLI 模式提供：
+- 互動式對話測試
+- 配置參數動態調整
+- 除錯和開發支援
 
-## 貢獻與支援
+### Discord 互動方式
 
-- 歡迎提交 Issue 與 Pull Request，請遵循專案風格並附上測試
-- 常見問題與故障排除請參考 [`LANGGRAPH_INTEGRATION_GUIDE.md`](LANGGRAPH_INTEGRATION_GUIDE.md)
-- 有任何疑問歡迎於 GitHub 提出
-
----
-
-## Star History
-
-<a href="https://star-history.com/#jakobdylanc/llmcord&Date">
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=jakobdylanc/llmcord&type=Date&theme=dark" />
-    <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/svg?repos=jakobdylanc/llmcord&type=Date" />
-    <img alt="Star History Chart" src="https://api.star-history.com/svg?repos=jakobdylanc/llmcord&type=Date" />
-  </picture>
-</a>
+- **自然對話**: 直接與 Bot 對話，支援文字和圖片
+- **多輪對話**: 保持對話上下文，支援連續提問
+- **智能研究**: 複雜問題自動啟動多步驟搜尋和分析
 
 ---
 
-**llmcord 以 LangGraph 智能研究為核心，結合多層次代理架構與即時互動優化，讓初華能溫柔而堅定地陪伴妳，無論是簡單的問候還是複雜的研究，都能給妳最貼心的回應。✨**
+## 專案架構
+
+```plaintext
+DCPersona/
+│
+├── main.py                  # Discord Bot 主程式入口
+├── cli_main.py              # CLI 測試介面
+├── config.yaml              # 型別安全配置檔
+├── personas/                # Agent 人格系統提示詞
+│
+├── discord_bot/             # Discord 整合層
+│   ├── client.py            # Discord Client 初始化
+│   ├── message_handler.py   # 訊息事件處理
+│   ├── message_collector.py # 多模態訊息收集
+│   ├── progress_manager.py  # 進度消息管理
+│   └── progress_adapter.py  # 進度適配器（串流支援）
+│
+├── agent_core/              # 統一 Agent 引擎
+│   ├── graph.py             # LangGraph 核心實現
+│   ├── agent_session.py     # 會話狀態管理
+│   ├── agent_utils.py       # Agent 輔助函式
+│   ├── progress_observer.py # 進度觀察者介面
+│   └── progress_mixin.py    # 進度更新混入
+│
+├── schemas/                 # 型別安全架構
+│   ├── agent_types.py       # Agent 核心型別
+│   ├── config_types.py      # 配置型別定義
+│   └── __init__.py
+│
+├── prompt_system/           # 提示詞管理
+│   ├── prompts.py           # 核心提示詞功能
+│   └── tool_prompts/        # 工具提示詞模板
+│
+├── utils/                   # 通用工具
+│   ├── config_loader.py     # 型別安全配置載入
+│   ├── logger.py            # 日誌系統
+│   └── common_utils.py      # 通用輔助函式
+│
+└── tests/                   # 測試檔案
+    └── ...                  # 單元與整合測試
+```
+
+詳細架構說明請參考 [`DCPersona_structure.md`](project_structure.md)
+
+---
+
+## 配置系統
+
+DCPersona 採用完全型別安全的配置系統：
+
+```yaml
+# config.yaml 範例
+agent:
+  behavior:
+    max_tool_rounds: 3
+    enable_reflection: true
+    enable_progress: true
+  
+  tools:
+    google_search:
+      enabled: true
+      priority: 1
+
+discord:
+  limits:
+    max_text: 8000
+    max_images: 5
+    max_messages: 20
+  enable_conversation_history: true
+```
+
+### 配置特色
+- **型別安全**: 使用 dataclass 而非字典存取
+- **自動驗證**: 啟動時檢查配置完整性
+- **IntelliSense**: IDE 提供完整的自動完成支援
+
+---
+
+## 測試
+
+### 執行測試
+
+```bash
+# 執行所有測試
+python -m pytest tests/ -v
+
+# 特定測試
+python -m pytest tests/test_agent.py -v
+```
+
+### 測試覆蓋
+- **單元測試**: 各模組核心功能
+- **整合測試**: Agent 端到端流程
+- **配置測試**: 型別安全配置載入
+
+---
+
+## 部署
+
+### Docker 部署
+
+```bash
+# 建立映像
+docker build -t dcpersona .
+
+# 啟動容器
+docker compose up -d
+```
+
+
+---
+
+**DCPersona 採用現代化架構設計，結合 LangGraph 智能工作流程和型別安全系統，為您打造最佳的 Discord AI 助手體驗。✨**

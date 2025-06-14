@@ -38,7 +38,7 @@ class CLIInterface:
     def show_config_info(self):
         """顯示配置資訊"""
         print("=" * 50)
-        print("🔧 LLMCord 配置資訊")
+        print("🔧 DCPersona 配置資訊")
         print("=" * 50)
         
         # 使用型別安全的配置存取
@@ -163,7 +163,7 @@ class CLIInterface:
     async def run(self):
         """運行 CLI 介面"""
         try:
-            print("🚀 歡迎使用 LLMCord CLI")
+            print("🚀 歡迎使用 DCPersona CLI")
             self.show_config_info()
             
             while True:
