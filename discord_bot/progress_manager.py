@@ -132,6 +132,10 @@ class ProgressManager:
                             value=sources_text,
                             inline=False
                         )
+            elif progress.stage == "streaming" and final_answer:
+                # 串流狀態：顯示串流內容
+                embed.description = final_answer[:4096]  # Discord embed 描述限制
+                embed.set_footer(text="🔄 正在回答...")
             else:
                 # 進度狀態：顯示進度訊息
                 embed.description = progress.message
@@ -194,6 +198,7 @@ class ProgressManager:
             "analyzing": "🧠",
             "completing": "⏳",
             "completed": "✅",
+            "streaming": "🔄",
             "error": "❌",
             "timeout": "⏰"
         }

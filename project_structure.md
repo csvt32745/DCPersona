@@ -55,7 +55,8 @@ DCPersona/
 - **配置驅動的代理行為**: 透過 `config.yaml` 動態調整 Agent 能力
 - **智能工具決策**: Agent 根據問題複雜度自主決定使用哪些工具
 - **多輪對話支援**: 支援複雜的多步驟研究與推理流程
-- **進度即時回饋**: 整合串流回應，提供即時進度更新
+- **智能串流系統**: 整合即時串流回應，支援基於時間和內容長度的智能更新策略
+- **統一進度管理**: 觀察者模式的解耦進度系統，支援多平台適配
 
 ### 2. 型別安全配置系統
 完全採用 dataclass 配置架構，消除字串 key 存取：
@@ -63,6 +64,8 @@ DCPersona/
 - **嚴格型別檢查**: 所有配置欄位都有明確的型別定義
 - **配置驗證**: 啟動時自動驗證配置完整性
 - **IntelliSense 支援**: IDE 可提供完整的自動完成
+- **串流配置**: 支援串流啟用控制和內容長度閾值設定
+- **進度配置**: 靈活的進度更新間隔和顯示模式配置
 
 ### 3. 模組化與解耦設計
 各模組職責清晰，低耦合高內聚：
@@ -70,6 +73,8 @@ DCPersona/
 - **Discord 層獨立**: 可輕鬆替換為其他平台
 - **Agent 核心通用**: 支援 CLI 和 Discord 雙模式
 - **工具系統可擴展**: 標準化的工具介面
+- **統一訊息管理**: 所有 Discord 訊息操作統一通過 ProgressManager 處理
+- **進度系統解耦**: 觀察者模式支援自定義進度處理器
 
 ---
 
@@ -96,8 +101,9 @@ flowchart TD
 3. **訊息收集**: `message_collector.py` 收集對話歷史和圖片等多模態內容
 4. **Agent 初始化**: 創建 `UnifiedAgent` 實例並配置進度觀察者
 5. **LangGraph 執行**: 執行 `generate_query_or_plan` → `execute_tools` → `reflection` → `finalize_answer` 流程
-6. **進度回饋**: 透過 `DiscordProgressAdapter` 即時更新 Discord 訊息
-7. **結果回覆**: 將最終答案格式化後回覆到 Discord
+6. **智能串流處理**: 在 `finalize_answer` 階段根據配置啟用串流回應，基於時間和內容長度智能更新
+7. **統一進度管理**: 透過 `DiscordProgressAdapter` 和 `ProgressManager` 統一處理所有 Discord 訊息操作
+8. **結果回覆**: 將最終答案格式化後回覆到 Discord，支援串流和非串流兩種模式
 
 ### CLI 工作流程
 
@@ -152,7 +158,9 @@ flowchart TD
 
 - **解耦設計**: Agent 專注核心邏輯，進度處理獨立
 - **多觀察者支援**: 可同時通知多個進度處理器
-- **串流支援**: 整合即時串流回應功能
+- **完整串流支援**: 整合 `on_streaming_chunk` 和 `on_streaming_complete` 方法
+- **統一介面**: 提供標準化的進度觀察者介面，支援自定義實現
+- **並行通知**: 支援並行通知所有註冊的觀察者，提高響應效率
 
 ### discord_bot/ - Discord 整合層
 
@@ -178,10 +186,12 @@ flowchart TD
 實現 Discord 特定的進度顯示：
 
 **功能特性**:
-- **即時更新**: 根據配置間隔更新 Discord 訊息
-- **串流支援**: 支援逐字串流回應
-- **狀態指示**: 使用表情符號指示不同處理階段
-- **錯誤處理**: 優雅處理網路異常和API限制
+- **統一訊息管理**: 所有 Discord 訊息操作統一通過 ProgressManager 處理
+- **智能串流支援**: 基於時間和內容長度的智能串流更新策略
+- **即時進度更新**: 根據配置間隔更新 Discord 訊息
+- **多階段支援**: 支援 starting、searching、analyzing、streaming、completed 等多種階段
+- **狀態指示**: 使用表情符號和 embed 格式指示不同處理階段
+- **錯誤處理**: 優雅處理網路異常和API限制，自動回退機制
 
 #### `message_manager.py` - Discord 訊息快取管理
 管理 Discord 訊息的快取和緩存：
@@ -232,6 +242,15 @@ discord:
     max_text: 8000         # 最大文字長度
     max_messages: 20       # 最大訊息歷史
   enable_conversation_history: true
+
+streaming:
+  enabled: true             # 啟用串流回應
+  min_content_length: 50    # 最小串流內容長度
+
+progress:
+  discord:
+    update_interval: 2.0    # 進度更新間隔（秒）
+    use_embeds: true        # 使用 Discord embed 格式
 ```
 
 ---
@@ -274,11 +293,19 @@ max_rounds = config.agent.behavior.max_tool_rounds
 - **單元測試**: 各模組核心功能測試
 - **整合測試**: Agent 流程端到端測試
 - **配置測試**: 型別安全配置載入測試
+- **串流測試**: 串流系統和智能更新策略測試
+- **進度系統測試**: 進度觀察者和適配器功能測試
 
 ### 執行測試
 ```bash
 # 執行所有測試
 python -m pytest tests/ -v
+
+# 串流系統測試
+python -m pytest tests/test_streaming.py -v
+
+# 進度系統測試
+python -m pytest tests/test_phase2_progress.py -v
 
 # CLI 功能測試
 python cli_main.py

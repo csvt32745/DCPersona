@@ -112,6 +112,7 @@ async def test_actual_message_processing_flow():
         mock_adapter_instance.on_completion = AsyncMock()
         mock_adapter_instance.cleanup = AsyncMock()
         mock_adapter_instance.on_error = AsyncMock()  # 添加 on_error 方法
+        mock_adapter_instance._streaming_message = None  # 模擬非串流模式
         mock_adapter.return_value = mock_adapter_instance
         
         # 執行測試
@@ -126,7 +127,10 @@ async def test_actual_message_processing_flow():
         mock_agent.add_progress_observer.assert_called_once()
         mock_agent.build_graph.assert_called_once()
         mock_graph.ainvoke.assert_called_once()
+        
+        # 在非串流模式下，on_completion 應該被調用
         mock_adapter_instance.on_completion.assert_called_once()
+        # cleanup 應該在 finally 塊中被調用
         mock_adapter_instance.cleanup.assert_called_once()
 
 
@@ -251,7 +255,7 @@ async def test_progress_adapter_integration():
     with patch('discord_bot.progress_adapter.get_progress_manager') as mock_get_manager:
         mock_manager = Mock()
         mock_manager.send_or_update_progress = AsyncMock()
-        mock_manager.cleanup_progress_message = AsyncMock()
+        mock_manager.cleanup_progress_message = Mock()  # 改為同步 Mock
         mock_get_manager.return_value = mock_manager
         
         # 創建適配器

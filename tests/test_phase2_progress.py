@@ -41,6 +41,8 @@ def test_progress_mixin():
             self.events = []
             self.completions = []
             self.errors = []
+            self.streaming_chunks = []
+            self.streaming_completes = []
         
         async def on_progress_update(self, event: ProgressEvent) -> None:
             self.events.append(event)
@@ -50,6 +52,12 @@ def test_progress_mixin():
         
         async def on_error(self, error: Exception) -> None:
             self.errors.append(error)
+            
+        async def on_streaming_chunk(self, content: str, is_final: bool) -> None:
+            self.streaming_chunks.append((content, is_final))
+            
+        async def on_streaming_complete(self) -> None:
+            self.streaming_completes.append(True)
     
     # 創建使用 ProgressMixin 的類別
     class TestAgent(ProgressMixin):
@@ -84,6 +92,8 @@ async def test_progress_notification():
             self.events = []
             self.completions = []
             self.errors = []
+            self.streaming_chunks = []
+            self.streaming_completes = []
         
         async def on_progress_update(self, event: ProgressEvent) -> None:
             self.events.append(event)
@@ -93,6 +103,12 @@ async def test_progress_notification():
         
         async def on_error(self, error: Exception) -> None:
             self.errors.append(error)
+            
+        async def on_streaming_chunk(self, content: str, is_final: bool) -> None:
+            self.streaming_chunks.append((content, is_final))
+            
+        async def on_streaming_complete(self) -> None:
+            self.streaming_completes.append(True)
     
     class TestAgent(ProgressMixin):
         def __init__(self):
@@ -239,6 +255,8 @@ def test_unified_agent_with_progress():
                 self.events = []
                 self.completions = []
                 self.errors = []
+                self.streaming_chunks = []
+                self.streaming_completes = []
             
             async def on_progress_update(self, event: ProgressEvent) -> None:
                 self.events.append(event)
@@ -248,6 +266,12 @@ def test_unified_agent_with_progress():
             
             async def on_error(self, error: Exception) -> None:
                 self.errors.append(error)
+            
+            async def on_streaming_chunk(self, content: str, is_final: bool) -> None:
+                self.streaming_chunks.append((content, is_final))
+            
+            async def on_streaming_complete(self) -> None:
+                self.streaming_completes.append(True)
         
         with patch('agent_core.graph.ChatGoogleGenerativeAI'):
             agent = UnifiedAgent(test_config)

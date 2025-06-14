@@ -64,14 +64,16 @@
 - **結構化內容**: 標準化的多模態內容處理
 
 ### ⚡ 即時體驗
-- **串流回應**: 逐字串流回應，即時進度更新
-- **進度系統**: 觀察者模式的解耦進度管理
-- **錯誤處理**: 優雅的降級和錯誤恢復機制
+- **智能串流**: 基於時間和內容長度的智能串流策略
+- **統一進度管理**: 觀察者模式的解耦進度系統，支援多平台適配
+- **即時回應**: 逐字串流回應，即時進度更新和狀態同步
+- **錯誤處理**: 優雅的降級和錯誤恢復機制，自動回退到同步模式
 
 ### 🛠️ 靈活架構
 - **模組化設計**: 清晰的職責分離和低耦合
-- **平台無關**: Discord 和 CLI 雙模式支援
-- **易於擴展**: 標準化的工具和模組介面
+- **平台無關**: Discord 和 CLI 雙模式支援，統一的進度介面
+- **易於擴展**: 標準化的工具和模組介面，支援自定義進度觀察者
+- **統一管理**: 所有 Discord 訊息操作統一通過 ProgressManager 處理
 
 ---
 
@@ -213,6 +215,16 @@ agent:
       enabled: true
       priority: 1
 
+streaming:
+  enabled: true
+  min_content_length: 50
+
+progress:
+  discord:
+  update_interval: 2.0
+    use_embeds: true
+
+
 discord:
   limits:
     max_text: 8000
@@ -224,7 +236,8 @@ discord:
 ### 配置特色
 - **型別安全**: 使用 dataclass 而非字典存取
 - **自動驗證**: 啟動時檢查配置完整性
-- **IntelliSense**: IDE 提供完整的自動完成支援
+- **控制**: 可配置的串流啟用和內容長度閾值
+- **進度管理**: 靈活的進度更新間隔和顯示模式
 
 ---
 
@@ -237,13 +250,14 @@ discord:
 python -m pytest tests/ -v
 
 # 特定測試
-python -m pytest tests/test_agent.py -v
+python -m pytest tests/test_phase2_progress.py -v
 ```
 
 ### 測試覆蓋
 - **單元測試**: 各模組核心功能
 - **整合測試**: Agent 端到端流程
 - **配置測試**: 型別安全配置載入
+- **串流測試**: 串流系統和進度管理功能
 
 ---
 
@@ -259,7 +273,6 @@ docker build -t dcpersona .
 docker compose up -d
 ```
 
-
 ---
 
-**DCPersona 採用現代化架構設計，結合 LangGraph 智能工作流程和型別安全系統，為您打造最佳的 Discord AI 助手體驗。✨**
+**DCPersona 採用現代化架構設計，結合 LangGraph 智能工作流程、統一串流系統和型別安全配置，為您打造最佳的 Discord AI 助手體驗。✨**

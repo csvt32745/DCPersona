@@ -498,9 +498,84 @@ class UnifiedAgent(ProgressMixin):
             self.logger.error(f"decide_next_step 失敗: {e}")
             return "finish"
 
+    def _build_final_system_prompt(self, context: str, messages_global_metadata: str) -> str:
+        """構建最終答案的系統提示詞
+        
+        Args:
+            context: 工具結果上下文
+            messages_global_metadata: 全域訊息元數據
+            
+        Returns:
+            str: 完整的系統提示詞
+        """
+        try:
+            # 使用 PromptSystem 構建基礎系統提示詞
+            base_system_prompt = self.prompt_system.get_system_instructions(
+                config=self.config,
+                available_tools=[],
+                messages_global_metadata=messages_global_metadata
+            )
+            
+            # 添加上下文資訊（如果有的話）
+            if context:
+                try:
+                    context_prompt = self.prompt_system.get_final_answer_context(
+                        context=context
+                    )
+                    full_system_prompt = base_system_prompt + "\n\n" + context_prompt
+                except Exception as e:
+                    self.logger.warning(f"讀取最終答案上下文提示詞失敗: {e}")
+                    context_prompt = f"以下是相關資訊：\n{context}\n請基於以上資訊回答。"
+                    full_system_prompt = base_system_prompt + "\n\n" + context_prompt
+            else:
+                full_system_prompt = base_system_prompt
+            
+            return full_system_prompt
+            
+        except Exception as e:
+            self.logger.error(f"構建最終系統提示詞失敗: {e}")
+            # 回退到簡單的系統提示詞
+            fallback_prompt = f"你是一個有用的助手。請根據提供的資訊回答用戶的問題。由於流程出現錯誤，請提醒一下用戶 {e}。"
+            if context:
+                fallback_prompt += f"\n\n以下是相關資訊：\n{context}\n請基於以上資訊回答。"
+            return fallback_prompt
+
+    def _build_messages_for_llm(self, messages: List[MsgNode], system_prompt: str) -> List:
+        """構建用於 LLM 的訊息列表
+        
+        Args:
+            messages: 原始訊息列表
+            system_prompt: 系統提示詞
+            
+        Returns:
+            List: LangChain 格式的訊息列表
+        """
+        try:
+            # 構建訊息列表
+            messages_for_llm = [SystemMessage(content=system_prompt)]
+            
+            for msg in messages[:-1]:  # 除了最後一條消息（當前用戶問題）
+                if msg.role == "user":
+                    messages_for_llm.append(HumanMessage(content=msg.content))
+                elif msg.role == "assistant":
+                    messages_for_llm.append(AIMessage(content=msg.content))
+            
+            # 將當前用戶問題作為 HumanMessage 加入
+            messages_for_llm.append(HumanMessage(content=messages[-1].content))
+            
+            return messages_for_llm
+            
+        except Exception as e:
+            self.logger.error(f"構建 LLM 訊息列表失敗: {e}")
+            # 回退到簡單的訊息格式
+            return [
+                SystemMessage(content=system_prompt),
+                HumanMessage(content=messages[-1].content if messages else "請回答用戶的問題。")
+            ]
+
     async def finalize_answer(self, state: OverallState) -> Dict[str, Any]:
         """
-        LangGraph 節點：生成最終答案
+        LangGraph 節點：生成最終答案（支援串流）
         
         基於所有可用的信息生成最終回答。
         """
@@ -522,21 +597,58 @@ class UnifiedAgent(ProgressMixin):
             if tool_results:
                 context = "\n".join([f"搜尋結果: {result}" for result in tool_results])
             
-            # 生成最終答案
-            try:
-                final_answer = self._generate_final_answer(messages, context, state.messages_global_metadata)
-            except Exception as e:
-                self.logger.warning(f"LLM 答案生成失敗，使用基本回覆: {e}")
-                final_answer = self._generate_basic_fallback_answer(messages, context)
+            # 構建系統提示詞和訊息列表
+            system_prompt = self._build_final_system_prompt(context, state.messages_global_metadata)
+            messages_for_llm = self._build_messages_for_llm(messages, system_prompt)
+            
+            # 檢查串流配置
+
+            final_answer = ""
+            
+            if self.config.streaming.enabled:
+                self.logger.info("finalize_answer: 啟用串流回應")
+                
+                try:
+                    # 使用 LLM 串流生成答案
+                    final_answer_chunks = []
+                    async for chunk in self.final_answer_llm.astream(messages_for_llm):
+                        content = chunk.content or ""
+                        if content:  # 只處理有內容的 chunk
+                            final_answer_chunks.append(content)
+                            # 通知串流塊，最後一個 chunk 通常內容為空，用來標示結束
+                            is_final = len(content) == 0
+                            await self._notify_streaming_chunk(content, is_final=is_final)
+                    
+                    # 組合完整答案
+                    final_answer = "".join(final_answer_chunks)
+                    
+                    # 通知串流完成
+                    await self._notify_streaming_complete()
+                    
+                except Exception as e:
+                    self.logger.warning(f"串流生成失敗，回退到同步模式: {e}")
+                    # 回退到同步模式
+                    final_answer = self.final_answer_llm.invoke(messages_for_llm).content
+                    
+            else:
+                self.logger.info("finalize_answer: 未啟用串流或無觀察者，使用一般回應")
+                # 生成完整答案（非串流）
+                try:
+                    # 直接使用 LLM invoke
+                    response = self.final_answer_llm.invoke(messages_for_llm)
+                    final_answer = response.content
+                except Exception as e:
+                    self.logger.warning(f"LLM 答案生成失敗，使用基本回覆: {e}")
+                    final_answer = self._generate_basic_fallback_answer(messages, context)
+                
+                # 通知完成（非串流模式）
+                await self._notify_progress(
+                    stage="completed",
+                    message="✅ 回答完成！",
+                    progress_percentage=100
+                )
             
             self.logger.info("finalize_answer: 答案生成完成")
-            
-            # 通知完成
-            await self._notify_progress(
-                stage="completed",
-                message="✅ 回答完成！",
-                progress_percentage=100
-            )
             
             return {
                 "final_answer": final_answer,
@@ -573,56 +685,6 @@ class UnifiedAgent(ProgressMixin):
         # 重構後簡化邏輯：總是認為結果充分，避免無限循環
         # 實際的輪次控制由 max_tool_rounds 來處理
         return True
-
-    def _generate_final_answer(self, messages: List[MsgNode], context: str, messages_global_metadata: str = "") -> str:
-        """生成最終答案（使用統一 PromptSystem 和工具提示詞檔案），整合全域 metadata"""
-        if not messages:
-            return "嗯...好像沒有收到你的訊息耶，可以再試一次嗎？😅"
-        
-        latest_message = messages[-1]
-        user_question = latest_message.content
-        
-        # 使用 PromptSystem 構建系統提示詞
-        try:
-            # 構建基礎系統提示詞
-            base_system_prompt = self.prompt_system.get_system_instructions(
-                config=self.config,  # 使用 typed config
-                available_tools=[],  # 最終答案生成階段不需要工具描述
-                messages_global_metadata=messages_global_metadata
-            )
-            
-            # 添加上下文資訊（如果有的話）
-            if context:
-                try:
-                    context_prompt = self.prompt_system.get_final_answer_context(
-                        context=context
-                    )
-                    full_system_prompt = base_system_prompt + "\n\n" + context_prompt
-                except Exception as e:
-                    self.logger.warning(f"讀取最終答案上下文提示詞失敗: {e}")
-                    # 回退到硬編碼版本
-                    context_prompt = f"以下是相關資訊：\n{context}\n請基於以上資訊回答。"
-                    full_system_prompt = base_system_prompt + "\n\n" + context_prompt
-            else:
-                full_system_prompt = base_system_prompt
-            
-            messages_for_final_answer = [SystemMessage(content=full_system_prompt)]
-                
-            for msg in messages[:-1]: # 除了最後一條消息（當前用戶問題）
-                if msg.role == "user":
-                    messages_for_final_answer.append(HumanMessage(content=msg.content))
-                elif msg.role == "assistant":
-                    messages_for_final_answer.append(AIMessage(content=msg.content))
-
-            # 將當前用戶問題作為 HumanMessage 加入
-            messages_for_final_answer.append(HumanMessage(content=user_question))
-            response = self.final_answer_llm.invoke(messages_for_final_answer)
-            return response.content.strip()
-            
-        except Exception as e:
-            self.logger.warning(f"使用 LLM 生成答案失敗: {e}")
-        
-        return self._generate_basic_fallback_answer(messages, context)
 
     def _generate_basic_fallback_answer(self, messages: List[MsgNode], context: str) -> str:
         return "出現錯誤，請再試一次 🔄"

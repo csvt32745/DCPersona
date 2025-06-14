@@ -105,7 +105,7 @@ progress:
   discord:
     enabled: true          # 是否啟用 Discord 進度更新
     use_embeds: true       # 是否使用嵌入式訊息
-    update_interval: 1     # 更新間隔（秒）
+    update_interval: 0.5     # 更新間隔（秒）
     cleanup_delay: 30      # 完成後清理延遲（秒）
   
   # CLI 進度更新
@@ -113,6 +113,11 @@ progress:
     enabled: true          # 是否啟用 CLI 進度更新
     show_percentage: true  # 是否顯示百分比
     show_eta: true         # 是否顯示預估完成時間
+
+# 串流回應配置
+streaming:
+  enabled: true            # 是否啟用串流回應
+  min_content_length: 100  # 最小內容長度才啟用串流
 
 # 開發與測試配置
 development:

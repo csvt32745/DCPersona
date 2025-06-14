@@ -212,8 +212,13 @@ class DiscordMessageHandler:
             sources = result.get("sources", [])
             
             if final_answer:
-                # 通知完成
-                await progress_adapter.on_completion(final_answer, sources)
+                # 檢查是否已經在串流模式下處理過
+                if not progress_adapter._streaming_message:
+                    # 非串流模式，需要通知完成
+                    await progress_adapter.on_completion(final_answer, sources)
+                else:
+                    # 串流模式，已經在 finalize_answer 中處理過了
+                    self.logger.info("串流模式已處理完成，跳過 on_completion 調用")
             else:
                 self.logger.warning("Agent 結果中沒有最終答案")
                 

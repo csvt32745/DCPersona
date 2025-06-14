@@ -5,6 +5,7 @@ Discord 進度適配器
 """
 
 import logging
+import time
 from typing import Optional, List, Dict, Any
 import asyncio
 import discord
@@ -12,6 +13,7 @@ import discord
 from agent_core.progress_observer import ProgressObserver, ProgressEvent
 from schemas.agent_types import DiscordProgressUpdate, ResearchSource
 from .progress_manager import get_progress_manager
+from utils.config_loader import load_typed_config
 
 
 class DiscordProgressAdapter(ProgressObserver):
@@ -31,9 +33,16 @@ class DiscordProgressAdapter(ProgressObserver):
         self.original_message = original_message
         self.progress_manager = get_progress_manager()
         self.logger = logging.getLogger(__name__)
+        self.config = load_typed_config()
         
         # 追蹤最後發送的進度訊息
         self._last_progress_message: Optional[discord.Message] = None
+        
+        # 串流相關狀態
+        self._streaming_content = ""
+        self._last_update = 0
+        self._streaming_message: Optional[discord.Message] = None
+        self._update_lock = asyncio.Lock()
         
     async def on_progress_update(self, event: ProgressEvent) -> None:
         """處理進度更新事件
@@ -51,6 +60,10 @@ class DiscordProgressAdapter(ProgressObserver):
             except RuntimeError:
                 # 沒有運行的事件循環，記錄但不嘗試發送 Discord 更新
                 self.logger.warning(f"跳過 Discord 進度更新（無事件循環）: {event.stage} - {event.message}")
+                return
+            
+            # 如果正在串流，則不顯示一般進度更新
+            if self._streaming_message:
                 return
             
             # 轉換為 Discord 進度更新格式
@@ -77,6 +90,79 @@ class DiscordProgressAdapter(ProgressObserver):
         except Exception as e:
             self.logger.error(f"Discord 進度更新失敗: {e}", exc_info=True)
     
+    async def on_streaming_chunk(self, content: str, is_final: bool = False) -> None:
+        """處理串流內容塊
+        
+        Args:
+            content: 串流內容
+            is_final: 是否為最終塊
+        """
+        async with self._update_lock:
+            self._streaming_content += content
+            
+            current_time = time.time()
+            update_interval = self.config.progress.discord.update_interval
+            
+            # 根據配置的更新間隔決定是否更新
+            should_update = (
+                (current_time - self._last_update >= update_interval) or 
+                is_final or  # 直接使用 is_final
+                len(self._streaming_content) > 1500  # Discord 字符限制考量
+            )
+            
+            if should_update:
+                await self._update_streaming_message()
+                self._last_update = current_time
+    
+    async def on_streaming_complete(self) -> None:
+        """處理串流完成"""
+        async with self._update_lock:
+            if self._streaming_content:
+                # 使用 progress_manager 發送最終的串流內容
+                completion_progress = DiscordProgressUpdate(
+                    stage="completed",
+                    message="✅ 回答完成",
+                    progress_percentage=100
+                )
+                
+                await self.progress_manager.send_or_update_progress(
+                    original_message=self.original_message,
+                    progress=completion_progress,
+                    final_answer=self._streaming_content
+                )
+                
+                # 清理串流狀態
+                self._streaming_message = None
+    
+    async def _update_streaming_message(self):
+        """更新串流訊息"""
+        try:
+            # 截斷過長的內容
+            display_content = self._streaming_content
+            if len(display_content) > 1800:
+                display_content = display_content[:1800] + "..."
+            
+            # 使用 progress_manager 更新串流進度
+            streaming_progress = DiscordProgressUpdate(
+                stage="streaming",
+                message="🔄 正在回答...",
+                progress_percentage=None  # 串流模式不顯示百分比
+            )
+            
+            # 將串流內容作為 final_answer 傳遞，但標記為進行中
+            result_message = await self.progress_manager.send_or_update_progress(
+                original_message=self.original_message,
+                progress=streaming_progress,
+                final_answer=display_content + " ⚪"  # 串流指示器
+            )
+            
+            # 記錄串流訊息以便後續更新
+            if result_message and not self._streaming_message:
+                self._streaming_message = result_message
+                
+        except Exception as e:
+            self.logger.error(f"串流訊息處理失敗: {e}")
+    
     async def on_completion(self, final_result: str, sources: Optional[List[Dict]] = None) -> None:
         """處理完成事件
         
@@ -95,6 +181,10 @@ class DiscordProgressAdapter(ProgressObserver):
             except RuntimeError:
                 # 沒有運行的事件循環，記錄但不嘗試發送 Discord 更新
                 self.logger.warning("跳過 Discord 完成事件（無事件循環）")
+                return
+            
+            # 如果正在串流，則不使用傳統的完成事件處理
+            if self._streaming_message:
                 return
             
             # 創建完成進度更新
@@ -126,23 +216,8 @@ class DiscordProgressAdapter(ProgressObserver):
             
             self.logger.info("Discord 完成事件已處理")
             
-        except RuntimeError as e:
-            if "Timeout context manager should be used inside a task" in str(e):
-                self.logger.warning("跳過 Discord 完成事件（事件循環上下文問題）")
-            else:
-                self.logger.error(f"Discord 完成事件處理失敗: {e}")
         except Exception as e:
-            self.logger.error(f"Discord 完成事件處理失敗: {e}", exc_info=True)
-            
-            # 備用方案：直接回覆原訊息（但只在有合適事件循環時）
-            try:
-                import asyncio
-                asyncio.get_running_loop()  # 檢查事件循環
-                await self.original_message.reply(final_result[:2000])  # Discord 訊息長度限制
-            except RuntimeError:
-                self.logger.warning("跳過備用回覆方案（無事件循環）")
-            except Exception as backup_error:
-                self.logger.error(f"備用回覆方案也失敗: {backup_error}")
+            self.logger.error(f"Discord 完成事件處理失敗: {e}")
     
     async def on_error(self, error: Exception) -> None:
         """處理錯誤事件
@@ -191,49 +266,39 @@ class DiscordProgressAdapter(ProgressObserver):
             try:
                 import asyncio
                 asyncio.get_running_loop()  # 檢查事件循環
-                await self.original_message.reply("抱歉，處理您的請求時發生錯誤。請稍後再試。")
-            except RuntimeError:
-                self.logger.warning("跳過備用錯誤回覆方案（無事件循環）")
-            except Exception as backup_error:
-                self.logger.error(f"備用錯誤回覆方案也失敗: {backup_error}")
+                # 使用 progress_manager 作為備用方案
+                fallback_progress = DiscordProgressUpdate(
+                    stage="error",
+                    message="❌ 處理時發生錯誤（備用模式）",
+                    progress_percentage=0
+                )
+                await self.progress_manager.send_or_update_progress(
+                    original_message=self.original_message,
+                    progress=fallback_progress,
+                    final_answer="抱歉，處理您的請求時發生錯誤。請稍後再試。"
+                )
+            except Exception as e:
+                self.logger.error(f"Discord 錯誤事件處理失敗: {e}")
     
     def get_last_progress_message(self) -> Optional[discord.Message]:
         """獲取最後發送的進度訊息
         
         Returns:
-            最後發送的進度訊息，如果沒有則返回 None
+            Optional[discord.Message]: 最後的進度訊息，如果沒有則返回 None
         """
         return self._last_progress_message
     
     async def cleanup(self):
-        """清理進度適配器資源
-        
-        移除進度訊息等清理工作
-        """
+        """清理資源"""
         try:
-            # 檢查是否在合適的異步上下文中
-            import asyncio
-            try:
-                # 嘗試獲取當前運行的事件循環
-                current_loop = asyncio.get_running_loop()
-            except RuntimeError:
-                # 沒有運行的事件循環，記錄但不嘗試 Discord 操作
-                self.logger.warning("跳過 Discord 進度適配器清理（無事件循環）")
-                return
-            
-            if self._last_progress_message:
-                # 使用進度管理器的清理功能
-                # cleanup_progress_message 是同步方法，不需要 await
-                # 並且需要傳遞 channel_id 而不是 message 對象
-                self.progress_manager.cleanup_progress_message(self._last_progress_message.channel.id)
-                self._last_progress_message = None
-                
-            self.logger.debug("Discord 進度適配器清理完成")
-            
-        except RuntimeError as e:
-            if "Timeout context manager should be used inside a task" in str(e):
-                self.logger.warning("跳過 Discord 進度適配器清理（事件循環上下文問題）")
-            else:
-                self.logger.error(f"Discord 進度適配器清理失敗: {e}")
+            # 清理進度管理器中的訊息
+            if hasattr(self, 'progress_manager') and self.progress_manager:
+                channel_id = self.original_message.channel.id
+                self.progress_manager.cleanup_progress_message(channel_id)
         except Exception as e:
-            self.logger.error(f"Discord 進度適配器清理失敗: {e}", exc_info=True) 
+            self.logger.warning(f"清理進度訊息失敗: {e}")
+        
+        # 清理串流相關狀態
+        self._streaming_content = ""
+        self._streaming_message = None
+        self._last_progress_message = None 

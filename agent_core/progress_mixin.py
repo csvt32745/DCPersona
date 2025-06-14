@@ -115,6 +115,40 @@ class ProgressMixin:
         if tasks:
             await asyncio.gather(*tasks, return_exceptions=True)
     
+    async def _notify_streaming_chunk(self, content: str, is_final: bool = False, **metadata):
+        """通知串流塊 (直接傳遞內容和is_final)
+        
+        Args:
+            content: 串流內容
+            is_final: 是否為最終塊
+            **metadata: 額外的元數據（目前未使用，保留以備將來擴展）
+        """
+        if not self._progress_observers:
+            return
+        
+        # 並行通知所有觀察者
+        tasks = []
+        for observer in self._progress_observers:
+            task = self._safe_notify_observer(observer.on_streaming_chunk, content, is_final)
+            tasks.append(task)
+        
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
+    
+    async def _notify_streaming_complete(self):
+        """通知串流完成"""
+        if not self._progress_observers:
+            return
+        
+        # 並行通知所有觀察者
+        tasks = []
+        for observer in self._progress_observers:
+            task = self._safe_notify_observer(observer.on_streaming_complete)
+            tasks.append(task)
+        
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
+    
     async def _safe_notify_observer(self, method, *args, **kwargs):
         """安全地通知觀察者，避免單一觀察者的錯誤影響其他觀察者
         

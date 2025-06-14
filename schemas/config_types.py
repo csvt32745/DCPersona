@@ -25,8 +25,7 @@ class ToolConfig:
 class StreamingConfig:
     """串流配置"""
     enabled: bool = True
-    chunk_size: int = 50  # 字符數
-    delay_ms: int = 50    # 毫秒延遲
+    min_content_length: int = 100  # 最小內容長度才啟用串流
 
 
 @dataclass 

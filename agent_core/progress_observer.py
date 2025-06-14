@@ -54,4 +54,19 @@ class ProgressObserver(ABC):
         Args:
             error: 發生的異常
         """
+        pass
+    
+    @abstractmethod
+    async def on_streaming_chunk(self, content: str, is_final: bool = False) -> None:
+        """處理串流塊
+        
+        Args:
+            content: 串流內容
+            is_final: 是否為最終塊
+        """
+        pass
+    
+    @abstractmethod
+    async def on_streaming_complete(self) -> None:
+        """處理串流完成"""
         pass 
