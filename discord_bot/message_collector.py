@@ -242,6 +242,7 @@ async def collect_message(
             break
     
     # 轉換為 MsgNode 格式
+    logging.debug(f"處理訊息: {processed_messages[:3]}")
     for processed_msg in processed_messages[::-1]:
         msg_node = MsgNode(
             role=processed_msg.role,
@@ -282,6 +283,8 @@ async def _process_single_message(
         cleaned_content = msg.content
         if msg.content.startswith(f"<@{discord_client_user.id}>"):
             cleaned_content = msg.content.removeprefix(f"<@{discord_client_user.id}>").lstrip()
+        if msg.author.id != discord_client_user.id:
+            cleaned_content = f"<@{msg.author.id}> {msg.author.display_name}: {cleaned_content}"
         
         # 處理附件
         good_attachments = [

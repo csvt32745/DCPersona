@@ -72,6 +72,7 @@ class DiscordContextData:
     channel_id: str = ""
     channel_name: str = ""
     guild_name: Optional[str] = None
+    user_id: str = ""
     user_name: str = ""
     mentions: List[str] = field(default_factory=list)
 

@@ -198,11 +198,13 @@ class PromptSystem:
         if discord_integration_cfg.include_mentions and discord_context.mentions:
             mention_info = f"此訊息提及了: {', '.join(discord_context.mentions)}"
             context_parts.append(mention_info)
+            
+        context_parts.append(f"回覆時禁止使用 <@{discord_context.bot_id}> {discord_context.bot_name}: 這種格式，自然講話就好!")
         
-        # 用戶上下文資訊（如果啟用）
-        if discord_integration_cfg.include_user_context and discord_context.user_name:
-            context_parts.append(f"用戶: {discord_context.user_name}")
-        
+        # 用戶上下文資訊（包括用戶 ID，如果啟用）
+        if discord_integration_cfg.include_user_context and discord_context.user_name and discord_context.user_id:
+            context_parts.append(f"最新訊息用戶: <@{discord_context.user_id}> {discord_context.user_name}")
+            
         if context_parts:
             return "Discord 環境資訊:\n" + "\n".join(context_parts)
         

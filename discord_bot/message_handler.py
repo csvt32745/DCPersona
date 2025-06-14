@@ -157,8 +157,9 @@ class DiscordMessageHandler:
                 channel_id=str(message.channel.id),
                 channel_name=getattr(message.channel, 'name', 'DM'),
                 guild_name=message.guild.name if message.guild else None,
+                user_id=str(message.author.id),
                 user_name=message.author.display_name,
-                mentions=[f"<@{user.id}> ({user.display_name})" for user in message.mentions]
+                mentions=[f"<@{user.id}> ({user.display_name})" for user in message.mentions if user.id != message.guild.me.id]
             )
             
             # 使用 PromptSystem 的 _build_discord_context 轉換為字串
