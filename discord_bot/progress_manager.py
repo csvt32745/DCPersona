@@ -80,14 +80,14 @@ class ProgressManager:
             if embed_content:
                 progress_msg = await original_message.reply(
                     embed=embed_content,
-                    # silent=True
+                    silent=True
                 )
             else:
                 # 回退到純文字格式
                 content = self._format_progress_content(progress, final_answer)
                 progress_msg = await original_message.reply(
                     content=content,
-                    # silent=True
+                    silent=True
                 )
             
             # 記錄新的進度消息
