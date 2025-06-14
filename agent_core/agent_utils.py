@@ -4,31 +4,35 @@ Agent 核心邏輯相關的輔助函數
 包含與 Agent 核心流程強相關的輔助函式，如引用處理、研究主題獲取等。
 """
 
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Union
 from langchain_core.messages import AnyMessage, AIMessage, HumanMessage
 
 
-def get_research_topic(messages: List[AnyMessage]) -> str:
+def _extract_text_content(content: Union[str, List[Dict[str, Any]]]) -> str:
     """
-    從訊息中獲取研究主題
+    安全地從多模態內容中提取文字部分
     
     Args:
-        messages: 訊息列表
+        content: 可能是字串或多模態列表的內容
         
     Returns:
-        str: 研究主題字串
+        str: 提取的文字內容
     """
-    # 檢查是否有歷史訊息，將訊息組合成單一字串
-    if len(messages) == 1:
-        research_topic = messages[-1].content
+    if isinstance(content, str):
+        return content
+    elif isinstance(content, list):
+        # 從多模態列表中提取文字部分
+        text_parts = []
+        for item in content:
+            if isinstance(item, dict):
+                if item.get("type") == "text":
+                    text_parts.append(item.get("text", ""))
+                elif item.get("type") == "image_url":
+                    # 對於圖片，添加描述性文字
+                    text_parts.append("[圖片]")
+        return " ".join(text_parts)
     else:
-        research_topic = ""
-        for message in messages:
-            if isinstance(message, HumanMessage):
-                research_topic += f"用戶: {message.content}\n"
-            elif isinstance(message, AIMessage):
-                research_topic += f"助手: {message.content}\n"
-    return research_topic
+        return str(content)
 
 
 def resolve_urls(grounding_chunks: List[Any], task_id: str) -> Dict[str, str]:

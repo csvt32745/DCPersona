@@ -23,9 +23,10 @@
 
 **任務清單**:
 
-- [ ] **Task 5.1.1**: 修改 `schemas/agent_types.py` 中的 `MsgNode`
+- [x] **Task 5.1.1**: 修改 `schemas/agent_types.py` 中的 `MsgNode`
   - **說明**: 將 `MsgNode.content` 的型別從 `str` 修改為 `Union[str, List[Dict[str, Any]]]`，以支援多模態內容的結構化列表。這是確保圖片資訊能在系統內部正確傳遞的基礎。
   - **修改位置**: `schemas/agent_types.py`
+  - **狀態**: ✅ 已完成
   - **參考修改**:
     ```python
     # schemas/agent_types.py
@@ -42,9 +43,10 @@
         metadata: Dict[str, Any] = field(default_factory=dict)
     ```
 
-- [ ] **Task 5.1.2**: 修改 `discord_bot/message_collector.py` 中的 `collect_message` 函數
+- [x] **Task 5.1.2**: 修改 `discord_bot/message_collector.py` 中的 `collect_message` 函數
   - **說明**: 確保在將 `ProcessedMessage` 轉換為 `MsgNode` 時，不再對 `content` 進行強制字串轉換。這樣，圖片的 Base64 編碼結構化資料就能被正確地儲存到 `MsgNode.content` 中。
   - **修改位置**: `discord_bot/message_collector.py`
+  - **狀態**: ✅ 已完成
   - **參考修改**:
     ```python
     # discord_bot/message_collector.py
@@ -62,18 +64,33 @@
     # ... existing code ...
     ```
 
-- [ ] **Task 5.1.3**: 確認 `agent_core/graph.py` 中的 LLM 訊息構建
+- [x] **Task 5.1.3**: 確認 `agent_core/graph.py` 中的 LLM 訊息構建
   - **說明**: 驗證 `_build_planning_prompt` 和 `_generate_final_answer` 等函數在構建 LangChain 的 `HumanMessage` 和 `AIMessage` 時，能夠直接傳遞 `MsgNode.content`。根據 LangChain 文件，這些訊息類別本身就支援多模態內容的列表格式，因此預期此任務無需代碼修改，僅為確認步驟。
+  - **狀態**: ✅ 已完成，並修正了相關問題
+  - **實際修改**:
+    * 添加了 `_extract_text_content()` 輔助函數來安全地從多模態內容中提取文字
+    * 修正了所有直接存取 `content` 並調用字串方法的地方
+    * 修正了 `_analyze_tool_necessity_fallback()` 中的 `.lower()` 調用
+    * 修正了 `agent_utils.py` 中的類似問題
   - **確認點**:
-    *   檢查 `_build_planning_prompt` 和 `_generate_final_answer` 中，對 `HumanMessage(content=msg.content)` 和 `AIMessage(content=msg.content)` 的使用。確認 `msg.content` 會直接傳遞。
-    *   由於 LangChain 內部機制會處理這個列表，因此不需要額外的字串化操作。
+    *   ✅ 檢查 `_build_planning_prompt` 和 `_build_messages_for_llm` 中，對 `HumanMessage(content=msg.content)` 和 `AIMessage(content=msg.content)` 的使用。確認 `msg.content` 會直接傳遞。
+    *   ✅ **特別注意：** LangChain 對於多模態內容的列表格式有特定的結構要求。對於圖片，`MsgNode.content` 中的 `List[Dict[str, Any]]` 預期應包含以下格式的字典：
+        ```python
+        # OpenAI Chat Completions 格式範例 (廣泛支援，已在 message_collector.py 中實作)
+        {
+            "type": "image_url",
+            "image_url": {"url": "data:image/jpeg;base64,<Base64 編碼的圖片字串>"}
+        }
+        ```
+        `discord_bot/message_collector.py` 已確保在將圖片轉換為 `MsgNode.content` 時，遵循上述 LangChain 期望的格式。
+    *   ✅ 由於 LangChain 內部機制會處理這個列表，因此不需要額外的字串化操作。
 
 **測試驗證**:
 ```bash
 # 為了驗證此階段的更改，您可能需要：
 # 1. 在模擬環境中發送一個包含文字和圖片的 Discord 訊息。
 # 2. 追蹤該訊息在 `discord_bot/message_collector.py` 和 `agent_core/graph.py` 中的傳遞過程。
-# 3. 確保 `MsgNode.content` 確實包含了圖片的結構化資料（而不是字串）。
+# 3. 確保 `MsgNode.content` 確實包含了圖片的結構化資料（而不是字串），並且格式符合 LangChain 的多模態輸入規範。
 # 4. 如果可能，嘗試使用一個支援多模態輸入的 LLM 模型（例如 Gemini Vision 模型）來測試其對圖片內容的理解。
 ```
 
@@ -164,76 +181,6 @@ class TestEndToEndFlow:
 - 所有端到端測試通過
 - 覆蓋率達到 80% 以上
 - 無關鍵功能缺失
-
-### Task 5.3: 性能優化
-**狀態**: ⏳ 待開始
-
-**目標**: 優化系統性能，確保響應時間和資源使用合理
-
-**優化重點**:
-- [ ] **配置載入性能**
-  ```python
-  # utils/config_loader.py
-  import functools
-  
-  @functools.lru_cache(maxsize=1)
-  def load_typed_config_cached(config_path: str = "config.yaml") -> AppConfig:
-      \"\"\"快取配置載入結果\"\"\"
-      return AppConfig.from_yaml(config_path)
-  ```
-
-- [ ] **工具執行性能**
-  - 並行執行優化
-  - 結果快取機制
-  - 超時控制
-
-- [ ] **串流回應性能**
-  - 串流塊大小優化
-  - Discord API 調用頻率控制
-  - 記憶體使用優化
-
-- [ ] **LLM 調用優化**
-  - 連接池管理
-  - 請求重試機制
-  - 回應快取
-
-**性能基準**:
-```python
-# tests/test_performance.py
-import time
-import pytest
-from memory_profiler import profile
-
-class TestPerformance:
-    def test_config_loading_performance(self):
-        \"\"\"測試配置載入性能\"\"\"
-        start_time = time.time()
-        config = load_typed_config()
-        load_time = time.time() - start_time
-        
-        assert load_time < 0.1  # 100ms 內完成
-    
-    @pytest.mark.asyncio
-    async def test_agent_response_time(self):
-        \"\"\"測試 Agent 回應時間\"\"\"
-        start_time = time.time()
-        # 執行 Agent
-        response_time = time.time() - start_time
-        
-        assert response_time < 10.0  # 10 秒內回應
-    
-    @profile
-    def test_memory_usage(self):
-        \"\"\"測試記憶體使用\"\"\"
-        # 執行完整流程並監控記憶體
-        pass
-```
-
-**驗收標準**:
-- 配置載入時間 < 100ms
-- Agent 回應時間 < 10s（不含工具執行）
-- 串流延遲 < 100ms
-- 記憶體使用穩定，無洩漏
 
 ### Task 5.4: 錯誤處理改進
 **狀態**: ⏳ 待開始

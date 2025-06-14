@@ -3,7 +3,7 @@
 """
 
 import pytest
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch, MagicMock, Mock
 from schemas.agent_types import OverallState, MsgNode, AgentPlan, ToolPlan
 from agent_core.graph import UnifiedAgent, create_unified_agent, create_agent_graph
 from schemas.config_types import AppConfig, AgentConfig, ToolConfig, AgentBehaviorConfig, LLMConfig, LLMModelConfig, SystemConfig, DiscordConfig
@@ -309,9 +309,17 @@ class TestUnifiedAgent:
              patch.dict('os.environ', {'GEMINI_API_KEY': 'test_key'}):
             # 設置模擬的 LLM 回應
             mock_llm_instance = MagicMock()
-            mock_response = MagicMock()
-            mock_response.content = "關於你問的「什麼是 AI？」，我找到了一些有用的資訊呢！✨\n\nAI 是人工智慧的縮寫，AI 技術正在快速發展\n\n希望這些對你有幫助！還有什麼想了解的嗎？😊"
-            mock_llm_instance.invoke.return_value = mock_response
+            
+            # 模擬 astream 方法
+            async def mock_astream_with_content(messages):
+                chunks = ["關於你問的「什麼是 AI？」，我找到了一些有用的資訊呢！✨\n\n",
+                          "AI 是人工智慧的縮寫，AI 技術正在快速發展\n\n",
+                          "希望這些對你有幫助！還有什麼想了解的嗎？😊"]
+                for chunk in chunks:
+                    yield Mock(content=chunk)
+                yield Mock(content="") # 結束標記
+            
+            mock_llm_instance.astream = mock_astream_with_content
             mock_llm_class.return_value = mock_llm_instance
             
             agent = UnifiedAgent(config)
@@ -327,6 +335,8 @@ class TestUnifiedAgent:
             
             assert "final_answer" in result
             assert "AI" in result["final_answer"]
+            assert "人工智慧" in result["final_answer"]
+            assert "技術" in result["final_answer"]
     
     @pytest.mark.asyncio
     async def test_finalize_answer_without_context(self):
@@ -337,9 +347,17 @@ class TestUnifiedAgent:
              patch.dict('os.environ', {'GEMINI_API_KEY': 'test_key'}):
             # 設置模擬的 LLM 回應
             mock_llm_instance = MagicMock()
-            mock_response = MagicMock()
-            mock_response.content = "嗨！關於「你好」，我很樂意和你聊聊～雖然我現在沒有額外的搜尋資訊，但我會盡我所知來回答你！😊 有什麼特別想聊的嗎？"
-            mock_llm_instance.invoke.return_value = mock_response
+            
+            # 模擬 astream 方法
+            async def mock_astream_without_content(messages):
+                chunks = ["嗨！關於「你好」，我很樂意和你聊聊～",
+                          "雖然我現在沒有額外的搜尋資訊，但我會盡我所知來回答你！😊 ",
+                          "有什麼特別想聊的嗎？"]
+                for chunk in chunks:
+                    yield Mock(content=chunk)
+                yield Mock(content="") # 結束標記
+            
+            mock_llm_instance.astream = mock_astream_without_content
             mock_llm_class.return_value = mock_llm_instance
             
             agent = UnifiedAgent(config)
@@ -355,6 +373,9 @@ class TestUnifiedAgent:
             
             assert "final_answer" in result
             assert "你好" in result["final_answer"]
+            assert "樂意" in result["final_answer"]
+            assert "聊聊" in result["final_answer"]
+            assert "資訊" in result["final_answer"]
     
     @pytest.mark.asyncio
     async def test_evaluate_results_sufficiency(self):

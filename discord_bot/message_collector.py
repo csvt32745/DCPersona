@@ -31,6 +31,12 @@ class ProcessedMessage:
     
     user_id: Optional[int] = None
     """發送者的 Discord 用戶 ID"""
+    
+    message_id: Optional[int] = None
+    """Discord 訊息的 ID"""
+    
+    created_at: Optional[datetime] = None
+    """訊息創建時間，用於排序"""
 
 
 @dataclass
@@ -198,51 +204,95 @@ async def collect_message(
     
     # 處理訊息鏈
     msg_count = 0
-    while curr_msg and msg_count < max_messages:
+    all_processed_messages_map: Dict[int, ProcessedMessage] = {} # 用於去重複
+    
+    # 這裡的邏輯需要調整，因為我們現在要從 history_msgs 和 curr_msg 中收集所有相關訊息
+    # 並在之後統一處理去重複和排序
+    
+    # 首先處理 new_msg 和其父訊息鏈
+    current_msg_to_process = new_msg
+    while current_msg_to_process and msg_count < max_messages:
         try:
             processed_msg = await _process_single_message(
-                curr_msg, 
+                current_msg_to_process, 
                 discord_client_user, 
                 max_text, 
-                remaining_imgs_count,
+                remaining_imgs_count, # 這裡的 remaining_imgs_count 在這個迴圈中不再是累計的，因為我們是獨立處理每個訊息的圖片限制
                 httpx_client
             )
             
-            if processed_msg:
-                processed_messages.append(processed_msg)
-                
-                # 更新剩餘圖片數量
-                if isinstance(processed_msg.content, list):
-                    img_count = sum(1 for item in processed_msg.content if item.get("type") == "image_url")
-                    remaining_imgs_count -= img_count
+            if processed_msg and processed_msg.message_id not in all_processed_messages_map:
+                all_processed_messages_map[processed_msg.message_id] = processed_msg
                 
                 # 檢查限制並添加警告
-                _check_limits_and_add_warnings(curr_msg, max_text, max_images, user_warnings)
+                _check_limits_and_add_warnings(current_msg_to_process, max_text, max_images, user_warnings)
             
             msg_count += 1
             
             # 嘗試獲取父訊息（回覆）
-            curr_msg = await _get_parent_message(curr_msg)
-            if curr_msg is None and history_msgs:
-                curr_msg = history_msgs.pop(-1)
-                
+            current_msg_to_process = await _get_parent_message(current_msg_to_process)
+            
         except Exception as e:
             logging.error(f"處理訊息時出錯: {e}")
             break
+            
+    # 將歷史訊息也加入待處理的集合中
+    for hist_msg in history_msgs:
+        if hist_msg.id not in all_processed_messages_map:
+            try:
+                processed_msg = await _process_single_message(
+                    hist_msg, 
+                    discord_client_user, 
+                    max_text, 
+                    max_images, # 歷史訊息的圖片限制獨立計算
+                    httpx_client
+                )
+                if processed_msg:
+                    all_processed_messages_map[processed_msg.message_id] = processed_msg
+                    _check_limits_and_add_warnings(hist_msg, max_text, max_images, user_warnings)
+            except Exception as e:
+                logging.error(f"處理歷史訊息時出錯: {e}")
+
+    # 對所有處理過的訊息進行去重複和排序
+    # 去重複已經在 all_processed_messages_map 中完成
+    processed_messages = sorted(
+        all_processed_messages_map.values(), 
+        key=lambda p_msg: p_msg.created_at or datetime.min # 使用 created_at 排序，如果為 None 則排在最前面
+    )
     
+    # 重新計算實際使用的圖片數量
+    actual_img_count = 0
+    for p_msg in processed_messages:
+        if isinstance(p_msg.content, list):
+            actual_img_count += sum(1 for item in p_msg.content if item.get("type") == "image_url")
+    
+    if actual_img_count > max_images:
+        user_warnings.add(f"⚠️ 實際處理的圖片數量超過 {max_images} 張")
+
     # 轉換為 MsgNode 格式
-    logging.debug(f"處理訊息: {processed_messages[:3]}")
-    for processed_msg in processed_messages[::-1]:
+    logging.debug(
+        "處理訊息: %r", 
+        [
+            processed_msg.content[:100] 
+            if isinstance(processed_msg.content, str) 
+            else (processed_msg.content[0]['text'] + " (with Image)")
+            for processed_msg in processed_messages
+        ]
+    )
+    for processed_msg in processed_messages: # 這裡不再需要 [::-1] 反轉，因為已經排序過了
         msg_node = MsgNode(
             role=processed_msg.role,
-            content=processed_msg.content if isinstance(processed_msg.content, str) else str(processed_msg.content),
-            metadata={"user_id": processed_msg.user_id} if processed_msg.user_id else {}
+            content=processed_msg.content,
+            metadata={"user_id": processed_msg.user_id, "message_id": processed_msg.message_id} if processed_msg.user_id else {"message_id": processed_msg.message_id}
         )
         messages.append(msg_node)
     
     # 快取處理後的訊息
-    messages_to_cache = [new_msg] + history_msgs
-    message_manager.cache_messages(messages_to_cache)
+    # 這裡的 messages_to_cache 應該是原始的 discord.Message 物件，用於快取
+    # 我們需要從 all_processed_messages_map 中獲取原始訊息的 ID，然後嘗試從 message_manager 中獲取原始訊息
+    # 但考慮到 history_msgs 已經包含了歷史訊息，我們可以簡單地將 new_msg 和 history_msgs 加入快取
+    # 這裡的邏輯保持不變，因為 cache_messages 預期的是 discord.Message 物件列表
+    message_manager.cache_messages([new_msg] + history_msgs)
     
     return CollectedMessages(
         messages=messages,
@@ -261,10 +311,10 @@ async def _process_single_message(
     try:
         # 清理內容（移除 bot 提及）
         cleaned_content = msg.content
-        if msg.content.startswith(f"<@{discord_client_user.id}>"):
-            cleaned_content = msg.content.removeprefix(f"<@{discord_client_user.id}>").lstrip()
+        if msg.content.startswith(discord_client_user.mention):
+            cleaned_content = msg.content.removeprefix(discord_client_user.mention).lstrip()
         if msg.author.id != discord_client_user.id:
-            cleaned_content = f"<@{msg.author.id}> {msg.author.display_name}: {cleaned_content}"
+            cleaned_content = f"{msg.author.mention} {msg.author.display_name}: {cleaned_content}"
         
         # 處理附件
         good_attachments = [
@@ -275,6 +325,7 @@ async def _process_single_message(
         attachment_responses = []
         if httpx_client and good_attachments:
             try:
+                logging.debug(f"下載附件: {[att.url for att in good_attachments]}")
                 attachment_responses = await asyncio.gather(
                     *[httpx_client.get(att.url) for att in good_attachments],
                     return_exceptions=True
@@ -311,9 +362,15 @@ async def _process_single_message(
         # 處理圖片附件
         images = []
         for att, resp in zip(good_attachments, attachment_responses):
-            if (att.content_type.startswith("image") and 
-                len(images) < remaining_imgs_count and
-                hasattr(resp, 'content') and not isinstance(resp, Exception)):
+            if att.content_type.startswith("image") and len(images) < remaining_imgs_count:
+                if isinstance(resp, Exception):
+                    logging.warning(f"下載圖片附件失敗 (異常): {att.filename} - {resp}")
+                    continue # Skip this image
+                
+                if not hasattr(resp, 'content') or not resp.content:
+                    logging.warning(f"圖片附件下載內容為空或無內容: {att.filename}")
+                    continue # Skip this image if content is missing or empty
+
                 try:
                     image_data = {
                         "type": "image_url",
@@ -322,8 +379,9 @@ async def _process_single_message(
                         }
                     }
                     images.append(image_data)
-                except Exception:
-                    logging.warning(f"無法處理圖片附件: {att.filename}")
+                    logging.debug(f"成功處理圖片附件: {att.filename}")
+                except Exception as e:
+                    logging.warning(f"無法編碼圖片附件為 Base64: {att.filename} - {e}")
         
         # 決定內容格式
         if images and text_content:
@@ -340,7 +398,9 @@ async def _process_single_message(
         return ProcessedMessage(
             content=content,
             role=role,
-            user_id=user_id
+            user_id=user_id,
+            message_id=msg.id,
+            created_at=msg.created_at
         )
         
     except Exception as e:

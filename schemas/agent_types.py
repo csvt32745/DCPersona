@@ -1,5 +1,5 @@
 from dataclasses import dataclass, field
-from typing import List, Dict, Any, Optional, Annotated
+from typing import List, Dict, Any, Optional, Annotated, Union
 import operator
 
 
@@ -7,7 +7,7 @@ import operator
 class MsgNode:
     """結構化訊息節點。"""
     role: str
-    content: str
+    content: Union[str, List[Dict[str, Any]]]
     metadata: Dict[str, Any] = field(default_factory=dict)
 
 

@@ -39,6 +39,7 @@ class TestMessageCollector:
         """創建模擬的 Discord 客戶端用戶"""
         user = Mock()
         user.id = 555666777
+        user.mention = "<@555666777>"
         return user
     
     @pytest.fixture

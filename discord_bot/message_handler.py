@@ -9,6 +9,7 @@ import logging
 import asyncio
 from typing import Dict, Any, Optional
 import discord
+import httpx
 
 from agent_core.graph import create_unified_agent
 from schemas.agent_types import OverallState, MsgNode
@@ -41,7 +42,9 @@ class DiscordMessageHandler:
         # 初始化 PromptSystem
         self.prompt_system = get_prompt_system()
         
-        # Instead of test on handle message, test on init
+        # 初始化 httpx 客戶端
+        self.httpx_client = httpx.AsyncClient()
+
         logging.info(f"Agent 測試初始化")
         self.agent = create_unified_agent(self.config)
         
@@ -68,7 +71,8 @@ class DiscordMessageHandler:
                 enable_conversation_history=self.config.discord.enable_conversation_history,
                 max_text=self.config.discord.limits.max_text,
                 max_images=self.config.discord.limits.max_images,
-                max_messages=self.config.discord.limits.max_messages
+                max_messages=self.config.discord.limits.max_messages,
+                httpx_client=self.httpx_client
             )
             
             # 使用統一 Agent 進行處理
@@ -140,6 +144,12 @@ class DiscordMessageHandler:
             if 'progress_adapter' in locals():
                 await progress_adapter.cleanup()
     
+    async def cleanup(self):
+        """清理資源，例如關閉 httpx 客戶端"""
+        if self.httpx_client:
+            await self.httpx_client.aclose()
+            self.logger.info("httpx 客戶端已關閉")
+
     def _format_discord_metadata(self, message: discord.Message) -> str:
         """將 Discord 訊息轉換為 metadata 字串
         

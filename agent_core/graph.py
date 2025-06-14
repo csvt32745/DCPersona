@@ -8,7 +8,7 @@
 import asyncio
 import logging
 import json
-from typing import Dict, Any, List, Optional, Literal
+from typing import Dict, Any, List, Optional, Literal, Union
 from datetime import datetime
 
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
@@ -21,8 +21,9 @@ from google.genai import Client
 from schemas.agent_types import OverallState, MsgNode, ToolPlan, AgentPlan, ToolExecutionState
 from utils.config_loader import load_typed_config
 from prompt_system.prompts import get_current_date, PromptSystem
-from .progress_mixin import ProgressMixin
 from schemas.config_types import AppConfig
+from .progress_mixin import ProgressMixin
+from .agent_utils import _extract_text_content
 
 
 class UnifiedAgent(ProgressMixin):
@@ -157,7 +158,7 @@ class UnifiedAgent(ProgressMixin):
                 message="🤔 正在分析您的問題並制定搜尋計劃..."
             )
             
-            user_content = state.messages[-1].content
+            user_content = _extract_text_content(state.messages[-1].content)
             max_tool_rounds = self.behavior_config.max_tool_rounds
             
             if max_tool_rounds == 0:
@@ -234,7 +235,8 @@ class UnifiedAgent(ProgressMixin):
             self.logger.warning(f"structured plan 生成失敗，回退到簡化邏輯: {e}")
             # 回退邏輯
             needs_tools = self._analyze_tool_necessity_fallback(messages)
-            queries = [messages[-1].content[:100]] if needs_tools else []
+            user_text = _extract_text_content(messages[-1].content)
+            queries = [user_text[:100]] if needs_tools else []
             tool_plans = []
             if needs_tools and self.google_client:
                 tool_plans = [ToolPlan(tool_name="google_search", queries=queries)]
@@ -568,9 +570,10 @@ class UnifiedAgent(ProgressMixin):
         except Exception as e:
             self.logger.error(f"構建 LLM 訊息列表失敗: {e}")
             # 回退到簡單的訊息格式
+            fallback_content = _extract_text_content(messages[-1].content) if messages else "請回答用戶的問題。"
             return [
                 SystemMessage(content=system_prompt),
-                HumanMessage(content=messages[-1].content if messages else "請回答用戶的問題。")
+                HumanMessage(content=fallback_content)
             ]
 
     async def finalize_answer(self, state: OverallState) -> Dict[str, Any]:
@@ -667,7 +670,6 @@ class UnifiedAgent(ProgressMixin):
                 "finished": True
             }
 
-    # 保留原有的輔助方法以確保向後相容性
     def _analyze_tool_necessity_fallback(self, messages: List[MsgNode]) -> bool:
         """關鍵字檢測回退方案 (仍基於最新訊息)"""
         tool_keywords = [
@@ -677,7 +679,9 @@ class UnifiedAgent(ProgressMixin):
             "網路搜尋", "網路研究"
         ]
         
-        content_lower = messages[-1].content.lower()
+        # 安全地提取文字內容
+        user_text = _extract_text_content(messages[-1].content)
+        content_lower = user_text.lower()
         return any(keyword in content_lower for keyword in tool_keywords)
 
     def _evaluate_results_sufficiency(self, tool_results: List[str], research_topic: str) -> bool:
