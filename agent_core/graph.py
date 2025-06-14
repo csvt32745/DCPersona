@@ -189,7 +189,7 @@ class UnifiedAgent(ProgressMixin):
             
             return {
                 "agent_plan": agent_plan,
-                "tool_round": 0,
+                "tool_round": state.tool_round + 1,
                 "research_topic": user_content
             }
             
@@ -488,7 +488,7 @@ class UnifiedAgent(ProgressMixin):
             
             # 決策邏輯
             if is_sufficient or current_round >= max_rounds:
-                self.logger.info(f"決定完成研究 (輪次={current_round}, 充分={is_sufficient})")
+                self.logger.info(f"決定完成研究 (輪次={current_round}/{max_rounds}, 充分={is_sufficient})")
                 return "finish"
             else:
                 self.logger.info(f"決定繼續研究 (輪次={current_round}/{max_rounds})")
