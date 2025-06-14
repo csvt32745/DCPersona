@@ -47,12 +47,12 @@ DCPersona/
 │   ├── message_handler.py   # 處理 Discord 事件
 │   ├── message_collector.py # 訊息收集與預處理
 │   ├── progress_manager.py  # Discord 進度消息管理
-│   └── progress_adapter.py  # Discord 進度適配器（整合 streaming）
+│   ├── progress_adapter.py  # Discord 進度適配器（整合 streaming）
+│   └── message_manager.py   # **[重構]** Discord 訊息快取管理
 │
 ├── agent_core/              # **[核心]** 統一的 Agent 處理引擎
 │   ├── agent.py             # 統一 Agent 實作入口
 │   ├── graph.py             # LangGraph 構建與節點定義
-│   ├── agent_session.py     # Agent 會話管理
 │   ├── agent_utils.py       # Agent 核心輔助函式
 │   ├── progress_observer.py # 進度觀察者介面（支援 streaming）
 │   └── progress_mixin.py    # 進度更新混入（整合 streaming）

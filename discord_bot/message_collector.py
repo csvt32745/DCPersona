@@ -2,7 +2,7 @@
 Discord 訊息收集與預處理模組
 
 收集並處理 Discord 訊息內容，建立對話歷史鏈，
-並整合會話管理功能。
+並整合 Discord 訊息快取功能。
 """
 
 import discord
@@ -14,7 +14,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 
 from schemas.agent_types import MsgNode
-from agent_core.agent_session import get_agent_session
+from discord_bot.message_manager import get_manager_instance
 
 
 @dataclass
@@ -37,7 +37,7 @@ class ProcessedMessage:
 class CollectedMessages:
     """收集到的訊息集合結構
     
-    提供類型安全的訊息收集結果，包含處理後的訊息、用戶警告和會話資訊。
+    提供類型安全的訊息收集結果，包含處理後的訊息和用戶警告。
     這個類別封裝了 Discord 訊息收集的完整結果，提供便利的存取方法。
     """
     messages: List[MsgNode] = field(default_factory=list)
@@ -45,9 +45,6 @@ class CollectedMessages:
     
     user_warnings: Set[str] = field(default_factory=set)
     """用戶警告集合，包含處理過程中的提示訊息（如附件過大、內容截斷等）"""
-    
-    session_id: Optional[str] = None
-    """會話標識符，用於追蹤對話狀態和歷史管理"""
     
     collection_timestamp: datetime = field(default_factory=datetime.now)
     """訊息收集的時間戳，用於追蹤和除錯"""
@@ -124,7 +121,6 @@ class CollectedMessages:
                 for msg in self.messages
             ],
             "user_warnings": list(self.user_warnings),
-            "session_id": self.session_id,
             "collection_timestamp": self.collection_timestamp.isoformat(),
             "message_count": self.message_count(),
             "has_warnings": self.has_warnings()
@@ -138,8 +134,7 @@ class CollectedMessages:
         """
         return (
             f"CollectedMessages(messages={self.message_count()}, "
-            f"warnings={len(self.user_warnings)}, "
-            f"session_id={self.session_id})"
+            f"warnings={len(self.user_warnings)})"
         )
     
     def __repr__(self) -> str:
@@ -152,7 +147,6 @@ class CollectedMessages:
             f"CollectedMessages("
             f"messages={self.messages}, "
             f"user_warnings={self.user_warnings}, "
-            f"session_id='{self.session_id}', "
             f"collection_timestamp={self.collection_timestamp}"
             f")"
         )
@@ -172,7 +166,6 @@ async def collect_message(
     
     Args:
         new_msg: Discord 訊息
-        cfg: 配置資料
         discord_client_user: Bot 的 Discord 用戶物件
         max_text: 每條訊息的最大文字長度
         max_images: 每條訊息的最大圖片數量
@@ -186,15 +179,11 @@ async def collect_message(
     user_warnings = set()
     curr_msg = new_msg
     
-    # 取得會話管理器
-    session_manager = get_agent_session()
-    
-    # 獲取或創建會話
-    session_id = session_manager.create_session(str(new_msg.channel.id))
-    session = session_manager.get_session(session_id)
+    # 取得 Discord 訊息管理器
+    message_manager = get_manager_instance()
     
     # 記錄收到的訊息
-    logging.info(f"處理訊息 (用戶: {new_msg.author.display_name}, 附件: {len(new_msg.attachments)}, 會話: {session_id})")
+    logging.info(f"處理訊息 (用戶: {new_msg.author.display_name}, 附件: {len(new_msg.attachments)})")
     
     # 獲取訊息歷史
     history_msgs = []
@@ -251,22 +240,13 @@ async def collect_message(
         )
         messages.append(msg_node)
     
-    # 快取處理後的訊息到會話
-    if session:
-        discord_messages = [
-            {
-                "id": new_msg.id,
-                "content": new_msg.content,
-                "author_id": new_msg.author.id,
-                "timestamp": new_msg.created_at.isoformat()
-            }
-        ]
-        session_manager.cache_discord_messages(session_id, discord_messages)
+    # 快取處理後的訊息
+    messages_to_cache = [new_msg] + history_msgs
+    message_manager.cache_messages(messages_to_cache)
     
     return CollectedMessages(
         messages=messages,
-        user_warnings=user_warnings,
-        session_id=session_id
+        user_warnings=user_warnings
     )
 
 
@@ -369,11 +349,32 @@ async def _process_single_message(
 
 
 async def _get_parent_message(msg: discord.Message) -> Optional[discord.Message]:
-    """獲取父訊息（回覆的原始訊息）"""
+    """獲取父訊息（回覆的原始訊息）
+    
+    優先從 Discord 訊息快取中查找，如果找不到再從 Discord API 獲取
+    """
+    if not msg.reference or not msg.reference.message_id:
+        return None
+    
     try:
-        if msg.reference and msg.reference.message_id:
-            return await msg.channel.fetch_message(msg.reference.message_id)
+        # 先從 Discord 訊息快取中查找
+        message_manager = get_manager_instance()
+        cached_message = message_manager.find_message_by_id(msg.reference.message_id)
+        
+        if cached_message:
+            logging.debug(f"從快取中找到父訊息: {msg.reference.message_id}")
+            return cached_message
+        
+        # 如果快取中沒有，再從 Discord API 獲取
+        parent_message = await msg.channel.fetch_message(msg.reference.message_id)
+        
+        # 將獲取到的父訊息也加入快取
+        message_manager.cache_message(parent_message)
+        
+        return parent_message
+        
     except (discord.NotFound, discord.HTTPException):
+        logging.debug(f"無法獲取父訊息: {msg.reference.message_id}")
         pass
     return None
 

@@ -14,6 +14,8 @@ import discord
 
 from schemas.agent_types import MsgNode
 from schemas.config_types import AppConfig, AgentConfig, AgentBehaviorConfig, LLMConfig, DiscordConfig, ToolConfig, LLMProviderConfig
+from discord_bot.message_manager import get_manager_instance
+from discord_bot.message_collector import collect_message, CollectedMessages, ProcessedMessage
 
 
 def get_test_discord_config():
@@ -86,8 +88,7 @@ async def test_actual_message_processing_flow():
         
         mock_collect.return_value = CollectedMessages(
             messages=[test_message],
-            user_warnings=set(),
-            session_id="test_session_123"
+            user_warnings=set()
         )
         
         # 設置 Agent 模擬
@@ -138,6 +139,7 @@ async def test_simple_message_collection():
     mock_message.content = "測試訊息"
     mock_message.author = Mock()
     mock_message.author.id = 12345
+    mock_message.author.display_name = "TestUser"
     mock_message.channel = Mock()
     mock_message.channel.id = 67890
     # 創建可異步迭代的模擬歷史
@@ -155,15 +157,26 @@ async def test_simple_message_collection():
     
     test_config = get_test_discord_config()
     
-    # 使用真實的 collect_message 函數
-    from discord_bot.message_collector import collect_message
-    
-    with patch('discord_bot.message_collector.get_agent_session') as mock_session:
-        mock_session_manager = Mock()
-        mock_session_manager.create_session.return_value = "test_session_123"
-        mock_session_manager.get_session.return_value = Mock()
-        mock_session_manager.cache_discord_messages = Mock()
-        mock_session.return_value = mock_session_manager
+    with patch('discord_bot.message_collector._process_single_message', new_callable=AsyncMock) as mock_process_single_message, \
+         patch('discord_bot.message_collector._get_parent_message', new_callable=AsyncMock) as mock_get_parent_message, \
+         patch('discord_bot.message_collector.get_manager_instance') as mock_get_manager_instance:
+        # 為了讓 collect_message 能夠使用模擬的 get_manager_instance，我們需要在 patch 塊內導入它
+        from discord_bot.message_collector import collect_message
+        
+        # 設置 _process_single_message 的模擬返回值
+        mock_processed_message = ProcessedMessage(
+            content=f"<@{mock_message.author.id}> {mock_message.author.display_name}: {mock_message.content}",
+            role="user",
+            user_id=mock_message.author.id
+        )
+        mock_process_single_message.return_value = mock_processed_message
+        
+        # 設置 _get_parent_message 的模擬返回值，使其不返回父訊息以簡化流程
+        mock_get_parent_message.return_value = None
+        
+        mock_message_manager = Mock()
+        mock_message_manager.cache_messages = Mock()
+        mock_get_manager_instance.return_value = mock_message_manager
         
         result = await collect_message(
             new_msg=mock_message,
@@ -177,11 +190,13 @@ async def test_simple_message_collection():
         # 驗證結果 - 現在使用 CollectedMessages dataclass
         assert hasattr(result, 'messages')
         assert hasattr(result, 'user_warnings')
-        assert hasattr(result, 'session_id')
         assert result.message_count() >= 1
-        assert result.messages[0].content == "測試訊息"
+        assert "<@12345> TestUser: 測試訊息" in result.messages[0].content
         assert result.messages[0].role == "user"
-        assert result.session_id == "test_session_123"
+        
+        # 驗證訊息管理器被呼叫
+        mock_get_manager_instance.assert_called_once()
+        mock_message_manager.cache_messages.assert_called_once_with([mock_message])
 
 
 def test_discord_client_creation():

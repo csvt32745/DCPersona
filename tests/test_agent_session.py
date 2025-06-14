@@ -1,107 +1,13 @@
 """
-測試 agent_session.py 模組
+測試 agent_session.py 模組（現在是 Discord 訊息管理器）
 """
 
 import pytest
 import asyncio
+from unittest.mock import Mock
 from datetime import datetime, timedelta
 
-from agent_core.agent_session import AgentSession, SessionData, DiscordMessageCache, get_agent_session
-
-
-class TestSessionData:
-    """測試 SessionData 類別"""
-    
-    def test_session_data_creation(self):
-        """測試會話資料創建"""
-        session_data = SessionData(
-            session_id="test_session",
-            channel_id="123456",
-            created_at=datetime.now(),
-            last_activity=datetime.now(),
-            message_count=0,
-            is_active=True
-        )
-        
-        assert session_data.session_id == "test_session"
-        assert session_data.channel_id == "123456"
-        assert session_data.is_active is True
-        assert session_data.message_count == 0
-    
-    def test_session_data_to_dict(self):
-        """測試會話資料序列化"""
-        now = datetime.now()
-        session_data = SessionData(
-            session_id="test_session",
-            channel_id="123456",
-            created_at=now,
-            last_activity=now,
-            message_count=5,
-            is_active=True
-        )
-        
-        data_dict = session_data.to_dict()
-        assert data_dict["session_id"] == "test_session"
-        assert data_dict["message_count"] == 5
-        assert isinstance(data_dict["created_at"], str)
-    
-    def test_session_data_from_dict(self):
-        """測試會話資料反序列化"""
-        now = datetime.now()
-        original_data = {
-            "session_id": "test_session",
-            "channel_id": "123456",
-            "created_at": now.isoformat(),
-            "last_activity": now.isoformat(),
-            "message_count": 3,
-            "is_active": True,
-            "langgraph_state": None,
-            "cached_messages": None
-        }
-        
-        session_data = SessionData.from_dict(original_data)
-        assert session_data.session_id == "test_session"
-        assert session_data.message_count == 3
-        assert isinstance(session_data.created_at, datetime)
-    
-    def test_update_activity(self):
-        """測試活動更新"""
-        session_data = SessionData(
-            session_id="test_session",
-            channel_id="123456",
-            created_at=datetime.now(),
-            last_activity=datetime.now(),
-            message_count=0,
-            is_active=True
-        )
-        
-        original_count = session_data.message_count
-        original_time = session_data.last_activity
-        
-        # 等待一小段時間確保時間差異
-        import time
-        time.sleep(0.01)
-        
-        session_data.update_activity()
-        
-        assert session_data.message_count == original_count + 1
-        assert session_data.last_activity > original_time
-    
-    def test_is_expired(self):
-        """測試過期檢查"""
-        # 創建過期的會話
-        old_time = datetime.now() - timedelta(hours=25)
-        session_data = SessionData(
-            session_id="test_session",
-            channel_id="123456",
-            created_at=old_time,
-            last_activity=old_time,
-            message_count=0,
-            is_active=True
-        )
-        
-        assert session_data.is_expired(24) is True
-        assert session_data.is_expired(26) is False
+from discord_bot.message_manager import MessageManager, MessageCache, get_manager_instance
 
 
 class TestDiscordMessageCache:
@@ -109,179 +15,287 @@ class TestDiscordMessageCache:
     
     def test_cache_creation(self):
         """測試快取創建"""
-        cache = DiscordMessageCache(
-            messages=[],
+        cache = MessageCache(
+            messages={},
             last_updated=datetime.now()
         )
         
         assert len(cache.messages) == 0
-        assert cache.max_size == 100
+        assert cache.max_size == 1000
     
     def test_add_message(self):
         """測試添加訊息"""
-        cache = DiscordMessageCache(
-            messages=[],
+        cache = MessageCache(
+            messages={},
             last_updated=datetime.now()
         )
         
-        test_message = {"id": 123, "content": "測試訊息"}
-        cache.add_message(test_message)
+        # 創建模擬的 Discord 訊息
+        mock_message = Mock()
+        mock_message.id = 123456789
+        mock_message.content = "測試訊息"
+        mock_message.created_at = datetime.now()
+        
+        cache.add_message(mock_message)
         
         assert len(cache.messages) == 1
-        assert cache.messages[0] == test_message
+        assert cache.messages[123456789] == mock_message
     
     def test_max_size_limit(self):
         """測試最大大小限制"""
-        cache = DiscordMessageCache(
-            messages=[],
+        cache = MessageCache(
+            messages={},
             last_updated=datetime.now(),
             max_size=3
         )
         
         # 添加超過最大大小的訊息
         for i in range(5):
-            cache.add_message({"id": i, "content": f"訊息 {i}"})
+            mock_message = Mock()
+            mock_message.id = i
+            mock_message.content = f"訊息 {i}"
+            mock_message.created_at = datetime.now() + timedelta(seconds=i)
+            cache.add_message(mock_message)
         
         assert len(cache.messages) == 3
         # 應該保留最新的 3 條訊息 (2, 3, 4)
-        assert cache.messages[0]["id"] == 2
-        assert cache.messages[-1]["id"] == 4
+        assert 2 in cache.messages
+        assert 3 in cache.messages
+        assert 4 in cache.messages
+        assert 0 not in cache.messages
+        assert 1 not in cache.messages
+    
+    def test_get_message_by_id(self):
+        """測試根據 ID 獲取訊息"""
+        cache = MessageCache(
+            messages={},
+            last_updated=datetime.now()
+        )
+        
+        mock_message = Mock()
+        mock_message.id = 123456789
+        mock_message.content = "測試訊息"
+        mock_message.created_at = datetime.now()
+        
+        cache.add_message(mock_message)
+        
+        found_message = cache.get_message_by_id(123456789)
+        assert found_message == mock_message
+        
+        not_found = cache.get_message_by_id(999999999)
+        assert not_found is None
     
     def test_get_recent_messages(self):
         """測試獲取最近訊息"""
-        cache = DiscordMessageCache(
-            messages=[],
+        cache = MessageCache(
+            messages={},
             last_updated=datetime.now()
         )
         
         # 添加多條訊息
         for i in range(10):
-            cache.add_message({"id": i, "content": f"訊息 {i}"})
+            mock_message = Mock()
+            mock_message.id = i
+            mock_message.content = f"訊息 {i}"
+            mock_message.created_at = datetime.now() + timedelta(seconds=i)
+            cache.add_message(mock_message)
         
         recent = cache.get_recent_messages(3)
         assert len(recent) == 3
-        assert recent[0]["id"] == 7  # 最近 3 條: 7, 8, 9
-        assert recent[-1]["id"] == 9
+        # 應該按時間倒序排列，最新的在前
+        assert recent[0].id == 9
+        assert recent[1].id == 8
+        assert recent[2].id == 7
+    
+    def test_get_messages_by_channel(self):
+        """測試獲取特定頻道的訊息"""
+        cache = MessageCache(
+            messages={},
+            last_updated=datetime.now()
+        )
+        
+        # 添加不同頻道的訊息
+        for i in range(5):
+            mock_message = Mock()
+            mock_message.id = i
+            mock_message.content = f"訊息 {i}"
+            mock_message.created_at = datetime.now() + timedelta(seconds=i)
+            mock_message.channel.id = 111 if i < 3 else 222
+            cache.add_message(mock_message)
+        
+        channel_111_messages = cache.get_messages_by_channel(111, 10)
+        assert len(channel_111_messages) == 3
+        
+        channel_222_messages = cache.get_messages_by_channel(222, 10)
+        assert len(channel_222_messages) == 2
+    
+    def test_cleanup_old_messages(self):
+        """測試清理舊訊息"""
+        cache = MessageCache(
+            messages={},
+            last_updated=datetime.now()
+        )
+        
+        # 添加新舊訊息
+        old_time = datetime.now() - timedelta(hours=25)
+        new_time = datetime.now()
+        
+        # 舊訊息
+        old_message = Mock()
+        old_message.id = 1
+        old_message.created_at = old_time
+        cache.add_message(old_message)
+        
+        # 新訊息
+        new_message = Mock()
+        new_message.id = 2
+        new_message.created_at = new_time
+        cache.add_message(new_message)
+        
+        # 清理 24 小時前的訊息
+        cache.cleanup_old_messages(24)
+        
+        assert 1 not in cache.messages  # 舊訊息被清理
+        assert 2 in cache.messages      # 新訊息保留
 
 
-class TestAgentSession:
-    """測試 AgentSession 類別"""
+class TestDiscordMessageManager:
+    """測試 DiscordMessageManager 類別"""
     
-    def test_session_creation(self):
-        """測試會話管理器創建"""
-        session_manager = AgentSession()
+    def test_manager_creation(self):
+        """測試訊息管理器創建"""
+        manager = MessageManager()
         
-        assert len(session_manager.sessions) == 0
-        assert len(session_manager.cache) == 0
-        assert session_manager.cleanup_interval == 3600
-        assert session_manager.session_timeout_hours == 24
+        assert len(manager.cache.messages) == 0
+        assert manager.cleanup_interval == 3600
+        assert manager.message_retention_hours == 24
     
-    def test_create_session(self):
-        """測試創建會話"""
-        session_manager = AgentSession()
+    def test_cache_message(self):
+        """測試快取單一訊息"""
+        manager = MessageManager()
         
-        channel_id = "123456789"
-        session_id = session_manager.create_session(channel_id)
+        mock_message = Mock()
+        mock_message.id = 123456789
+        mock_message.content = "測試訊息"
+        mock_message.created_at = datetime.now()
         
-        assert session_id.startswith("session_")
-        assert session_id in session_manager.sessions
-        assert session_id in session_manager.cache
+        manager.cache_message(mock_message)
         
-        session = session_manager.get_session(session_id)
-        assert session is not None
-        assert session.channel_id == channel_id
-        assert session.is_active is True
+        assert len(manager.cache.messages) == 1
+        assert manager.cache.messages[123456789] == mock_message
     
-    def test_get_active_session_for_channel(self):
-        """測試獲取頻道活躍會話"""
-        session_manager = AgentSession()
+    def test_cache_messages(self):
+        """測試快取多條訊息"""
+        manager = MessageManager()
         
-        channel_id = "123456789"
-        session_id = session_manager.create_session(channel_id)
+        messages = []
+        for i in range(3):
+            mock_message = Mock()
+            mock_message.id = i
+            mock_message.content = f"訊息 {i}"
+            mock_message.created_at = datetime.now()
+            messages.append(mock_message)
         
-        active_session = session_manager.get_active_session_for_channel(channel_id)
-        assert active_session is not None
-        assert active_session.session_id == session_id
+        manager.cache_messages(messages)
         
-        # 測試不存在的頻道
-        no_session = session_manager.get_active_session_for_channel("999999")
-        assert no_session is None
+        assert len(manager.cache.messages) == 3
     
-    def test_langgraph_state_management(self):
-        """測試 LangGraph 狀態管理"""
-        session_manager = AgentSession()
+    def test_find_message_by_id(self):
+        """測試根據訊息 ID 查找訊息"""
+        manager = MessageManager()
         
-        session_id = session_manager.create_session("123456")
+        mock_message = Mock()
+        mock_message.id = 123456789
+        mock_message.content = "測試訊息"
+        mock_message.created_at = datetime.now()
         
-        # 測試獲取初始狀態
-        initial_state = session_manager.get_langgraph_state(session_id)
-        assert initial_state is not None
-        assert "messages" in initial_state
+        manager.cache_message(mock_message)
         
-        # 測試更新狀態
-        new_state = {
-            "messages": ["test_message"],
-            "tool_calls": ["test_tool"],
-            "current_round": 1
-        }
-        session_manager.update_langgraph_state(session_id, new_state)
+        found_message = manager.find_message_by_id(123456789)
+        assert found_message == mock_message
         
-        updated_state = session_manager.get_langgraph_state(session_id)
-        assert updated_state == new_state
+        not_found = manager.find_message_by_id(999999999)
+        assert not_found is None
     
-    def test_cache_discord_messages(self):
-        """測試 Discord 訊息快取"""
-        session_manager = AgentSession()
+    def test_get_recent_messages(self):
+        """測試獲取最近訊息"""
+        manager = MessageManager()
         
-        session_id = session_manager.create_session("123456")
+        # 添加多條訊息
+        for i in range(5):
+            mock_message = Mock()
+            mock_message.id = i
+            mock_message.content = f"訊息 {i}"
+            mock_message.created_at = datetime.now() + timedelta(seconds=i)
+            manager.cache_message(mock_message)
         
-        test_messages = [
-            {"id": 1, "content": "訊息 1"},
-            {"id": 2, "content": "訊息 2"}
-        ]
-        
-        session_manager.cache_discord_messages(session_id, test_messages)
-        
-        cached = session_manager.get_cached_messages(session_id, 10)
-        assert len(cached) == 2
+        recent = manager.get_recent_messages(3)
+        assert len(recent) == 3
+        assert recent[0].id == 4  # 最新的在前
     
-    def test_session_stats(self):
-        """測試會話統計"""
-        session_manager = AgentSession()
+    def test_get_messages_by_channel(self):
+        """測試獲取特定頻道的訊息"""
+        manager = MessageManager()
         
-        # 創建幾個會話
-        session_manager.create_session("123")
-        session_manager.create_session("456")
+        # 添加不同頻道的訊息
+        for i in range(5):
+            mock_message = Mock()
+            mock_message.id = i
+            mock_message.content = f"訊息 {i}"
+            mock_message.created_at = datetime.now()
+            mock_message.channel.id = 111 if i < 3 else 222
+            manager.cache_message(mock_message)
         
-        stats = session_manager.get_session_stats()
-        assert stats["total_sessions"] == 2
-        assert stats["active_sessions"] == 2
-        assert stats["cache_size"] == 2
+        channel_messages = manager.get_messages_by_channel(111, 10)
+        assert len(channel_messages) == 3
     
-    @pytest.mark.asyncio
-    async def test_cleanup_expired_sessions(self):
-        """測試清理過期會話"""
-        session_manager = AgentSession(session_timeout_hours=1)
+    def test_get_cache_stats(self):
+        """測試獲取快取統計"""
+        manager = MessageManager()
         
-        # 創建會話並手動設置為過期
-        session_id = session_manager.create_session("123456")
-        session = session_manager.get_session(session_id)
-        session.last_activity = datetime.now() - timedelta(hours=2)
+        # 添加一些訊息
+        for i in range(3):
+            mock_message = Mock()
+            mock_message.id = i
+            mock_message.created_at = datetime.now()
+            manager.cache_message(mock_message)
         
-        await session_manager.cleanup_expired_sessions()
+        stats = manager.get_cache_stats()
+        assert stats["total_messages"] == 3
+        assert stats["max_size"] == 1000
+        assert "last_updated" in stats
+    
+    def test_cleanup_old_messages(self):
+        """測試清理舊訊息"""
+        manager = MessageManager(message_retention_hours=1)
         
-        # 檢查會話是否被清理
-        assert session_id not in session_manager.sessions
-        assert session_id not in session_manager.cache
+        # 添加新舊訊息
+        old_time = datetime.now() - timedelta(hours=2)
+        new_time = datetime.now()
+        
+        old_message = Mock()
+        old_message.id = 1
+        old_message.created_at = old_time
+        manager.cache_message(old_message)
+        
+        new_message = Mock()
+        new_message.id = 2
+        new_message.created_at = new_time
+        manager.cache_message(new_message)
+        
+        manager.cleanup_old_messages()
+        
+        assert 1 not in manager.cache.messages
+        assert 2 in manager.cache.messages
 
 
-def test_get_agent_session():
-    """測試全域會話管理器獲取"""
-    session1 = get_agent_session()
-    session2 = get_agent_session()
+def test_get_manager_instance():
+    """測試全域 Discord 訊息管理器獲取"""
+    manager1 = get_manager_instance()
+    manager2 = get_manager_instance()
     
     # 應該是同一個實例
-    assert session1 is session2
+    assert manager1 is manager2
 
 
 if __name__ == "__main__":

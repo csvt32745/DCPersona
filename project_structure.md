@@ -17,11 +17,11 @@ DCPersona/
 │   ├── message_handler.py   # Discord 訊息事件處理主流程
 │   ├── message_collector.py # 訊息收集、歷史處理與多模態支援
 │   ├── progress_manager.py  # Discord 進度消息管理系統
-│   └── progress_adapter.py  # Discord 進度適配器（支援串流回應）
+│   ├── progress_adapter.py  # Discord 進度適配器（支援串流回應）
+│   └── message_manager.py   # Discord 訊息快取管理
 │
 ├── agent_core/              # **[核心]** 統一 Agent 處理引擎
 │   ├── graph.py             # LangGraph 構建與 Agent 節點實現
-│   ├── agent_session.py     # Agent 會話狀態管理與生命週期
 │   ├── agent_utils.py       # Agent 核心輔助函式
 │   ├── progress_observer.py # 進度觀察者介面（支援串流）
 │   └── progress_mixin.py    # 進度更新混入（整合串流功能）
@@ -182,6 +182,14 @@ flowchart TD
 - **串流支援**: 支援逐字串流回應
 - **狀態指示**: 使用表情符號指示不同處理階段
 - **錯誤處理**: 優雅處理網路異常和API限制
+
+#### `message_manager.py` - Discord 訊息快取管理
+管理 Discord 訊息的快取和緩存：
+
+**主要功能**:
+- **訊息快取**: 儲存最近接收的訊息
+- **緩存管理**: 管理訊息的過期和清理
+- **性能優化**: 減少重複訊息處理
 
 ### schemas/ - 型別安全架構
 
