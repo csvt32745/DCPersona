@@ -12,10 +12,11 @@ import discord
 
 from agent_core.graph import create_unified_agent
 from schemas.agent_types import OverallState, MsgNode
+from schemas.config_types import AppConfig, DiscordContextData
 from utils.config_loader import load_typed_config
+from prompt_system.prompts import get_prompt_system
 from .progress_adapter import DiscordProgressAdapter
 from .message_collector import collect_message, CollectedMessages
-from schemas.config_types import AppConfig
 
 
 class DiscordMessageHandler:
@@ -36,6 +37,9 @@ class DiscordMessageHandler:
         # Agent 設定
         self.agent_config = self.config.agent
         self.behavior_config = self.config.agent.behavior
+        
+        # 初始化 PromptSystem
+        self.prompt_system = get_prompt_system()
         
         # Instead of test on handle message, test on init
         logging.info(f"Agent 測試初始化")
@@ -106,7 +110,7 @@ class DiscordMessageHandler:
             agent.add_progress_observer(progress_adapter)
             
             # 準備初始狀態
-            initial_state = self._prepare_agent_state(collected_messages)
+            initial_state = self._prepare_agent_state(collected_messages, original_message)
             
             # 構建並執行 LangGraph
             graph = agent.build_graph()
@@ -136,11 +140,40 @@ class DiscordMessageHandler:
             if 'progress_adapter' in locals():
                 await progress_adapter.cleanup()
     
-    def _prepare_agent_state(self, collected_messages: CollectedMessages) -> OverallState:
-        """準備 Agent 初始狀態
+    def _format_discord_metadata(self, message: discord.Message) -> str:
+        """將 Discord 訊息轉換為 metadata 字串
+        
+        Args:
+            message: Discord 訊息物件
+            
+        Returns:
+            str: 格式化的 Discord metadata 字串
+        """
+        try:
+            # 收集 Discord context data
+            discord_context = DiscordContextData(
+                bot_id=str(message.guild.me.id) if message.guild else str(message.channel.me.id),
+                bot_name=message.guild.me.display_name if message.guild else message.channel.me.display_name,
+                channel_id=str(message.channel.id),
+                channel_name=getattr(message.channel, 'name', 'DM'),
+                guild_name=message.guild.name if message.guild else None,
+                user_name=message.author.display_name,
+                mentions=[f"<@{user.id}> ({user.display_name})" for user in message.mentions]
+            )
+            
+            # 使用 PromptSystem 的 _build_discord_context 轉換為字串
+            return self.prompt_system._build_discord_context(self.config, discord_context)
+            
+        except Exception as e:
+            self.logger.warning(f"格式化 Discord metadata 失敗: {e}")
+            return ""
+    
+    def _prepare_agent_state(self, collected_messages: CollectedMessages, original_message: discord.Message) -> OverallState:
+        """準備 Agent 初始狀態，加入 Discord metadata
         
         Args:
             collected_messages: 收集到的訊息資料
+            original_message: 原始 Discord 訊息
             
         Returns:
             OverallState: Agent 初始狀態
@@ -148,11 +181,15 @@ class DiscordMessageHandler:
         # 從 CollectedMessages 結構中獲取訊息
         messages = collected_messages.messages
         
-        # 創建初始狀態
+        # 格式化 Discord metadata
+        discord_metadata = self._format_discord_metadata(original_message)
+        
+        # 創建初始狀態，將 metadata 加入
         initial_state = OverallState(
             messages=messages,  # 直接使用已經是 MsgNode 格式的訊息
             tool_round=0,
-            finished=False
+            finished=False,
+            messages_global_metadata=discord_metadata
         )
         
         return initial_state

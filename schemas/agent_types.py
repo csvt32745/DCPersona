@@ -51,6 +51,9 @@ class OverallState:
     final_answer: str = ""
     sources: List[Dict[str, str]] = field(default_factory=list)
     
+    # 全域訊息 metadata
+    messages_global_metadata: str = ""
+    
     # 向後相容性欄位（保留舊的欄位以避免破壞現有代碼）
     needs_tools: bool = False
     search_queries: Annotated[List[str], operator.add] = field(default_factory=list)

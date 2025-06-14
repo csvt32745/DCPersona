@@ -16,6 +16,7 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(level
 from agent_core.graph import create_unified_agent
 from schemas.agent_types import OverallState, MsgNode
 from utils.config_loader import load_typed_config
+from utils.logger import setup_logger
 from schemas.config_types import AppConfig, ConfigurationError
 
 
@@ -29,13 +30,10 @@ class CLIInterface:
             config: 型別安全的配置實例
         """
         self.config = config or load_typed_config()
+        setup_logger(self.config)
         self.logger = logging.getLogger(__name__)
         
         # 設置日誌
-        logging.basicConfig(
-            level=logging.INFO,
-            format='%(asctime)s - %(levelname)s - %(message)s'
-        )
     
     def show_config_info(self):
         """顯示配置資訊"""

@@ -14,7 +14,7 @@ import pytz
 import os
 
 from utils.config_loader import load_typed_config
-from schemas.config_types import AppConfig
+from schemas.config_types import AppConfig, DiscordContextData
 
 # 常數
 ROOT_PROMPT_DIR = "persona"
@@ -97,127 +97,126 @@ class PromptSystem:
     
     def get_system_instructions(
         self,
-        cfg: Dict[str, Any],
+        config: AppConfig,
         available_tools: List[str],
-        discord_context: Optional[Dict[str, Any]] = None
+        messages_global_metadata: str = ""
     ) -> str:
         """
         獲取完整的系統指令，包括 persona、工具說明、時間戳等
         
         Args:
-            cfg: 配置資料
+            config: 型別化配置實例
             available_tools: 可用的工具列表
-            discord_context: Discord 上下文資訊（可選）
+            messages_global_metadata: 全域訊息 metadata
         
         Returns:
             str: 完整的系統指令
         """
         prompt_parts = []
 
-        # 1. 基礎系統提示詞
-        base_prompt = cfg.get("system_prompt", "")
-        if base_prompt:
-            prompt_parts.append(base_prompt.strip())
+        # 使用型別化配置
+        persona_cfg = config.prompt_system.persona
+        
+        # 1. 基礎系統提示詞（從統一的 persona 配置）
+        if persona_cfg.enabled:
+            if persona_cfg.random_selection:
+                # 隨機選擇 persona
+                persona_prompt = self.random_system_prompt(persona_cfg.persona_directory)
+                if persona_prompt:
+                    prompt_parts.append(persona_prompt.strip())
+                elif persona_cfg.fallback:
+                    prompt_parts.append(persona_cfg.fallback.strip())
+            else:
+                # 使用預設 persona
+                if persona_cfg.default_persona:
+                    specific_persona = self.get_specific_persona(
+                        persona_cfg.default_persona, 
+                        persona_cfg.persona_directory
+                    )
+                    if specific_persona:
+                        prompt_parts.append(specific_persona.strip())
+                    elif persona_cfg.fallback:
+                        prompt_parts.append(persona_cfg.fallback.strip())
+        else:
+            # Persona 被禁用，使用回退提示詞
+            if persona_cfg.fallback:
+                prompt_parts.append(persona_cfg.fallback.strip())
 
-        # 2. Random persona（如果啟用）
-        if cfg.get("is_random_system_prompt", False):
-            persona_prompt = self.random_system_prompt()
-            if persona_prompt:
-                prompt_parts.append(persona_prompt.strip())
-
-        # 3. 特定 persona 檔案（如果指定）
-        system_prompt_file = cfg.get("system_prompt_file")
-        if system_prompt_file:
-            specific_persona = self.get_specific_persona(
-                Path(system_prompt_file).stem
-            )
-            if specific_persona:
-                prompt_parts.append(specific_persona.strip())
-
-        # 4. Discord 特定資訊
-        discord_info = self._build_discord_context(cfg, discord_context)
-        if discord_info:
-            prompt_parts.append(discord_info)
-
-        # 5. 時間戳資訊
-        timestamp_info = self._build_timestamp_info(cfg)
-        if timestamp_info:
-            prompt_parts.append(timestamp_info)
-
-        # 6. 工具描述
+        # 2. 工具描述
         tool_descriptions = self.generate_tool_descriptions(available_tools)
         if tool_descriptions:
             prompt_parts.append(tool_descriptions)
 
-        return "\n\n".join(prompt_parts)
+        # 3. 時間戳資訊
+        timestamp_info = self._build_timestamp_info(config)
+        if timestamp_info:
+            prompt_parts.append(timestamp_info)
 
-    def build_system_prompt(
-        self,
-        cfg: Dict[str, Any],
-        discord_context: Optional[Dict[str, Any]] = None
-    ) -> str:
-        """
-        組裝系統提示詞，包含 persona、時間戳、Discord 特定資訊等
+        # 4. 全域 metadata（倒數第二位）
+        if messages_global_metadata:
+            prompt_parts.append(messages_global_metadata)
+
+        # 5. 最後加入任何其他系統指令（如 tool result 相關）
+        # （這裡是倒數第一位，為未來的 tool result 指令預留）
         
-        Args:
-            cfg: 配置資料
-            discord_context: Discord 上下文資訊（可選）
-        
-        Returns:
-            str: 完整的系統提示詞
-        """
-        # 直接呼叫 get_system_instructions，但在此函數中沒有 available_tools
-        # 為了保持原函數簽名，傳遞空列表或根據需求調整
-        # 注意：如果此函數仍然被 LangGraph 以外的部分調用且需要工具，需要修改調用方
-        return self.get_system_instructions(cfg, [], discord_context)
+        result = "\n\n".join(prompt_parts)
+        self.logger.debug(f"系統指令: {result}")
+        return result
     
     def _build_discord_context(
         self,
-        cfg: Dict[str, Any],
-        discord_context: Optional[Dict[str, Any]]
+        config: AppConfig,
+        discord_context: DiscordContextData = None
     ) -> str:
         """建立 Discord 特定上下文"""
-        if not discord_context:
+        if discord_context is None:
             return ""
         
+        discord_integration_cfg = config.prompt_system.discord_integration
         context_parts = []
         
-        # Bot ID 資訊
-        bot_id = discord_context.get("bot_id")
-        if bot_id:
-            context_parts.append(f"我的 Discord Bot ID 是 {bot_id}")
+        # Bot ID 和名稱資訊
+        if discord_context.bot_id:
+            if discord_context.bot_name:
+                context_parts.append(f"<@{discord_context.bot_id}> ({discord_context.bot_name}) 是你的 ID，如果有人提到 <@{discord_context.bot_id}> 就是在說你")
+            else:
+                context_parts.append(f"<@{discord_context.bot_id}> 是你的 ID，如果有人提到 <@{discord_context.bot_id}> 就是在說你")
+            context_parts.append("User's names are their Discord IDs and should be typed as '<@ID>'.")
         
         # 頻道資訊
-        channel_id = discord_context.get("channel_id")
-        if channel_id:
-            context_parts.append(f"當前頻道 ID: {channel_id}")
+        if discord_context.channel_id:
+            if discord_context.channel_name:
+                context_parts.append(f"當前頻道: <#{discord_context.channel_id}> ({discord_context.channel_name})")
+            else:
+                context_parts.append(f"當前頻道 ID: {discord_context.channel_id}")
         
         # 伺服器資訊
-        guild_name = discord_context.get("guild_name")
-        if guild_name:
-            context_parts.append(f"當前伺服器: {guild_name}")
+        if discord_context.guild_name:
+            context_parts.append(f"當前伺服器: {discord_context.guild_name}")
         
-        # 用戶提及資訊
-        mentions = discord_context.get("mentions", [])
-        if mentions:
-            mention_info = f"此訊息提及了: {', '.join(mentions)}"
+        # 用戶提及資訊（如果啟用）
+        if discord_integration_cfg.include_mentions and discord_context.mentions:
+            mention_info = f"此訊息提及了: {', '.join(discord_context.mentions)}"
             context_parts.append(mention_info)
+        
+        # 用戶上下文資訊（如果啟用）
+        if discord_integration_cfg.include_user_context and discord_context.user_name:
+            context_parts.append(f"用戶: {discord_context.user_name}")
         
         if context_parts:
             return "Discord 環境資訊:\n" + "\n".join(context_parts)
         
         return ""
     
-    def _build_timestamp_info(self, cfg: Dict[str, Any]) -> str:
+    def _build_timestamp_info(self, config: AppConfig) -> str:
         """建立時間戳資訊"""
-        prompt_config = cfg.get("prompt_system", {})
-        discord_config = prompt_config.get("discord_integration", {})
+        discord_integration_cfg = config.prompt_system.discord_integration
         
-        if not discord_config.get("include_timestamp", True):
+        if not discord_integration_cfg.include_timestamp:
             return ""
         
         try:
-            timezone = discord_config.get("timezone", DEFAULT_TIMEZONE)
+            timezone = config.system.timezone
             tz = pytz.timezone(timezone)
             current_time = datetime.now(tz)
             
@@ -269,6 +268,142 @@ class PromptSystem:
             "cached_personas": list(self._persona_cache.keys()),
             "cache_size": len(self._persona_cache)
         }
+    
+    def get_tool_prompt(self, prompt_name: str, **format_args) -> str:
+        """
+        獲取工具提示詞並進行格式化
+        
+        Args:
+            prompt_name: 提示詞名稱（不包含 .txt 擴展名）
+            **format_args: 格式化參數
+            
+        Returns:
+            str: 格式化後的提示詞
+            
+        Raises:
+            FileNotFoundError: 如果提示詞檔案不存在
+            KeyError: 如果缺少必要的格式化參數
+        """
+        tool_prompts_dir = Path("prompt_system/tool_prompts")
+        prompt_file = tool_prompts_dir / f"{prompt_name}.txt"
+        
+        if not prompt_file.exists():
+            raise FileNotFoundError(f"工具提示詞檔案不存在: {prompt_file}")
+        
+        try:
+            with open(prompt_file, 'r', encoding='utf-8') as f:
+                content = f.read().strip()
+            
+            # 檢查格式字符串
+            self._validate_format_string(content, format_args)
+            
+            # 格式化內容
+            return content.format(**format_args)
+            
+        except Exception as e:
+            self.logger.error(f"讀取或格式化工具提示詞失敗 {prompt_file}: {e}")
+            raise
+    
+    def get_planning_instructions(self, current_date: str) -> str:
+        """獲取計劃指令，包含 JSON 模板"""
+        try:
+            # 載入基本指令
+            base_instructions = self.get_tool_prompt("planning_instructions", current_date=current_date)
+            self.logger.debug(f"載入規劃指令: {base_instructions}")
+            
+            # 載入 JSON 模板
+            json_template = self._load_json_template("planning_json_template")
+            self.logger.debug(f"載入 JSON 模板: {json_template}")
+            
+            if json_template:
+                return f"{base_instructions}\n\n範例格式:\n{json_template}"
+            else:
+                return base_instructions
+                
+        except Exception as e:
+            self.logger.error(f"獲取計劃指令失敗: {e}")
+            return f"請分析用戶問題並決定是否需要搜尋。當前日期：{current_date}"
+    
+    def get_final_answer_context(self, **format_args) -> str:
+        """獲取最終答案上下文提示詞"""
+        try:
+            result = self.get_tool_prompt("final_answer_context", **format_args)
+            self.logger.debug(f"載入最終答案上下文: {result}")
+            return result
+        except Exception as e:
+            self.logger.error(f"獲取最終答案上下文失敗: {e}")
+            return "請根據以下資訊提供完整的回答。"
+    
+    def get_web_searcher_instructions(self, research_topic: str, current_date: str) -> str:
+        """獲取網路搜尋指令"""
+        try:
+            result = self.get_tool_prompt(
+                "web_searcher_instructions",
+                research_topic=research_topic,
+                current_date=current_date
+            )
+            self.logger.debug(f"載入網路搜尋指令: {result}")
+            return result
+        except Exception as e:
+            self.logger.error(f"獲取網路搜尋指令失敗: {e}")
+            return f"搜尋關於「{research_topic}」的最新資訊。當前日期：{current_date}"
+    
+    def _load_json_template(self, template_name: str) -> str:
+        """載入 JSON 模板檔案"""
+        try:
+            tool_prompts_dir = Path("prompt_system/tool_prompts")
+            template_file = tool_prompts_dir / f"{template_name}.txt"
+            
+            if template_file.exists():
+                with open(template_file, 'r', encoding='utf-8') as f:
+                    return f.read().strip()
+            else:
+                self.logger.warning(f"JSON 模板檔案不存在: {template_file}")
+                return ""
+                
+        except Exception as e:
+            self.logger.error(f"載入 JSON 模板失敗: {e}")
+            return ""
+    
+    def _validate_format_string(self, content: str, format_args: Dict[str, Any]) -> None:
+        """
+        驗證格式字符串，確保所有必需的參數都存在
+        
+        Args:
+            content: 提示詞內容
+            format_args: 格式化參數
+            
+        Raises:
+            KeyError: 如果缺少必要的格式化參數
+        """
+        import re
+        
+        # 移除 JSON 示例區塊，避免誤判
+        # 查找 {{ 和 }} 之間的內容（JSON 示例）
+        json_pattern = r'\{\{.*?\}\}'
+        content_without_json = re.sub(json_pattern, '', content, flags=re.DOTALL)
+        
+        # 查找所有格式字符串 {parameter_name}
+        format_pattern = r'\{([^}]+)\}'
+        required_params = set(re.findall(format_pattern, content_without_json))
+        
+        # 檢查所有必需參數是否存在
+        missing_params = required_params - set(format_args.keys())
+        if missing_params:
+            raise KeyError(f"缺少必要的格式化參數: {missing_params}")
+    
+    def get_available_tool_prompts(self) -> List[str]:
+        """獲取可用的工具提示詞列表"""
+        tool_prompts_dir = Path("prompt_system/tool_prompts")
+        if not tool_prompts_dir.exists():
+            return []
+        
+        try:
+            prompt_files = list(tool_prompts_dir.glob("*.txt"))
+            return [f.stem for f in prompt_files]
+        except Exception as e:
+            self.logger.error(f"獲取工具提示詞列表時出錯: {e}")
+            return []
 
 
 # 全域提示詞系統實例
@@ -281,203 +416,12 @@ def get_prompt_system() -> PromptSystem:
         _prompt_system = PromptSystem()
     return _prompt_system
 
-
-# 便利函數（向後兼容）
-def random_system_prompt(root: Union[str, Path] = ROOT_PROMPT_DIR) -> str:
-    """隨機選取 persona 的便利函數"""
-    system = get_prompt_system()
-    return system.random_system_prompt(root)
-
-
-def build_system_prompt(
-    cfg: Dict[str, Any],
-    discord_context: Optional[Dict[str, Any]] = None
-) -> str:
-    """快速建立系統提示詞的便利函數"""
-    prompt_system = get_prompt_system()
-    return prompt_system.build_system_prompt(cfg, discord_context)
-
-
-# ===== Agent 搜尋相關提示詞 =====
-
 def get_current_date(timezone_str: str = DEFAULT_TIMEZONE) -> str:
     """獲取當前日期字串"""
     try:
         tz = pytz.timezone(timezone_str)
         current_time = datetime.now(tz)
-        return current_time.strftime('%Y-%m-%d')
+        return current_time.strftime('%Y-%m-%d %H:%M:%S')
     except Exception as e:
         logging.getLogger(__name__).warning(f"獲取當前日期時出錯: {e}")
-        return datetime.now().strftime('%Y-%m-%d')
-
-
-def load_persona_files(persona_dir: str = "persona") -> Dict[str, str]:
-    """載入所有 persona 檔案
-    
-    Args:
-        persona_dir: persona 檔案目錄
-        
-    Returns:
-        Dict[str, str]: 檔案名稱到內容的映射
-    """
-    personas = {}
-    persona_path = Path(persona_dir)
-    
-    if not persona_path.exists():
-        logging.warning(f"Persona 目錄不存在: {persona_dir}")
-        return personas
-    
-    try:
-        for file_path in persona_path.glob("*.txt"):
-            try:
-                with open(file_path, 'r', encoding='utf-8') as f:
-                    content = f.read().strip()
-                    if content:
-                        personas[file_path.name] = content
-                        logging.debug(f"載入 persona: {file_path.name}")
-            except Exception as e:
-                logging.warning(f"載入 persona 檔案失敗 {file_path}: {e}")
-    except Exception as e:
-        logging.error(f"掃描 persona 目錄失敗: {e}")
-    
-    return personas
-
-
-def get_system_prompt(config: Optional[AppConfig] = None) -> str:
-    """獲取系統提示詞
-    
-    Args:
-        config: 型別安全的配置實例
-        
-    Returns:
-        str: 系統提示詞
-    """
-    if config is None:
-        config = load_typed_config()
-    
-    try:
-        # 使用型別安全的配置存取
-        prompt_config = config.prompt_system
-        system_prompt_config = prompt_config.system_prompt
-        
-        # 檢查是否使用檔案
-        if system_prompt_config.use_file and system_prompt_config.file:
-            persona_file = system_prompt_config.file
-            
-            # 如果啟用隨機選擇
-            if prompt_config.persona.random_selection:
-                personas = load_persona_files()
-                if personas:
-                    # 隨機選擇一個 persona
-                    selected_file = random.choice(list(personas.keys()))
-                    selected_content = personas[selected_file]
-                    logging.info(f"隨機選擇 persona: {selected_file}")
-                    return selected_content
-                else:
-                    logging.warning("沒有找到 persona 檔案，使用預設檔案")
-            
-            # 載入指定檔案
-            persona_path = Path("persona") / persona_file
-            if persona_path.exists():
-                try:
-                    with open(persona_path, 'r', encoding='utf-8') as f:
-                        content = f.read().strip()
-                        if content:
-                            logging.info(f"載入系統提示詞檔案: {persona_file}")
-                            return content
-                except Exception as e:
-                    logging.error(f"載入系統提示詞檔案失敗 {persona_file}: {e}")
-        
-        # 使用回退提示詞
-        fallback_prompt = system_prompt_config.fallback
-        logging.info("使用回退系統提示詞")
-        return fallback_prompt
-        
-    except Exception as e:
-        logging.error(f"獲取系統提示詞失敗: {e}")
-        return "你是一個有用的 AI 助手。"
-
-
-def format_discord_context(
-    discord_context: Dict[str, Any], 
-    config: Optional[AppConfig] = None
-) -> str:
-    """格式化 Discord 上下文資訊
-    
-    Args:
-        discord_context: Discord 上下文字典
-        config: 型別安全的配置實例
-        
-    Returns:
-        str: 格式化的上下文字串
-    """
-    if config is None:
-        config = load_typed_config()
-    
-    try:
-        context_parts = []
-        
-        # 使用型別安全的配置存取
-        discord_integration = config.prompt_system.discord_integration
-        
-        # 添加時間戳
-        if discord_integration.include_timestamp:
-            current_time = get_current_date(config.system.timezone)
-            context_parts.append(f"當前時間: {current_time}")
-        
-        # 添加 Bot 資訊
-        bot_id = discord_context.get("bot_id")
-        if bot_id:
-            context_parts.append(f"你的 Discord ID: <@{bot_id}>")
-        
-        # 添加頻道資訊
-        channel_id = discord_context.get("channel_id")
-        if channel_id:
-            context_parts.append(f"當前頻道: <#{channel_id}>")
-        
-        # 添加伺服器資訊
-        guild_name = discord_context.get("guild_name")
-        if guild_name:
-            context_parts.append(f"伺服器: {guild_name}")
-        
-        # 添加提及資訊
-        if discord_integration.include_mentions:
-            mentions = discord_context.get("mentions", [])
-            if mentions:
-                mention_strs = [f"<@{user_id}>" for user_id in mentions]
-                context_parts.append(f"提及的用戶: {', '.join(mention_strs)}")
-        
-        return "\n".join(context_parts) if context_parts else ""
-        
-    except Exception as e:
-        logging.error(f"格式化 Discord 上下文失敗: {e}")
-        return ""
-
-
-# 工具相關的提示詞模板
-web_searcher_instructions = """作為一個網路搜尋專家，你的目標是：
-
-1. 分析用戶的問題，決定是否需要最新的資訊
-2. 如果需要搜尋，創建精確的搜尋關鍵詞
-3. 合并搜尋結果，提供準確且有用的回應
-
-研究主題: {research_topic}
-當前日期: {current_date}
-
-搜尋策略：
-- 使用明確、相關的關鍵詞
-- 避免太廣泛的搜尋詞
-- 考慮時間效應和地區效應
-- 優先選擇權威來源
-
-回應要求：
-- 根據搜尋結果提供準確的資訊
-- 標明資訊來源
-- 承認不確定性
-- 提供有用的後續建議
-""" 
-
-# This function was incorrectly added and should be removed.
-# def _get_system_message_for_planning_agent(self, current_date: str) -> str:
-#     # ... existing code ...
-#     return "" 
+        return datetime.now().strftime('%Y-%m-%d %H:%M:%S')

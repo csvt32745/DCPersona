@@ -1,9 +1,10 @@
 # Task 5: 整合測試與優化
 
 ## 概述
-確保所有新功能正常運作，進行性能優化，完善錯誤處理，並更新相關文檔。
+確保所有新功能正常運作，包含多模態輸入支援的實作，進行性能優化，完善錯誤處理，並更新相關文檔。
 
 ## 目標
+- 實作多模態輸入支援
 - 端到端測試所有重構功能
 - 性能優化和瓶頸排除
 - 完善錯誤處理和降級機制
@@ -15,7 +16,73 @@
 
 ## 子任務
 
-### Task 5.1: 端到端測試
+### Task 5.1: 多模態輸入支援
+**狀態**: ⏳ 待開始
+
+**目標**: 實現 LLM 對 Discord 圖片輸入的支援，使其能夠理解並處理包含文字和圖片的訊息。
+
+**任務清單**:
+
+- [ ] **Task 5.1.1**: 修改 `schemas/agent_types.py` 中的 `MsgNode`
+  - **說明**: 將 `MsgNode.content` 的型別從 `str` 修改為 `Union[str, List[Dict[str, Any]]]`，以支援多模態內容的結構化列表。這是確保圖片資訊能在系統內部正確傳遞的基礎。
+  - **修改位置**: `schemas/agent_types.py`
+  - **參考修改**:
+    ```python
+    # schemas/agent_types.py
+    from dataclasses import dataclass, field
+    from typing import List, Dict, Any, Optional, Annotated, Union # <-- 新增 Union
+
+    # ... existing imports ...
+
+    @dataclass
+    class MsgNode:
+        \"\"\"結構化訊息節點。\"\"\"
+        role: str
+        content: Union[str, List[Dict[str, Any]]] # <-- 修改這裡的型別
+        metadata: Dict[str, Any] = field(default_factory=dict)
+    ```
+
+- [ ] **Task 5.1.2**: 修改 `discord_bot/message_collector.py` 中的 `collect_message` 函數
+  - **說明**: 確保在將 `ProcessedMessage` 轉換為 `MsgNode` 時，不再對 `content` 進行強制字串轉換。這樣，圖片的 Base64 編碼結構化資料就能被正確地儲存到 `MsgNode.content` 中。
+  - **修改位置**: `discord_bot/message_collector.py`
+  - **參考修改**:
+    ```python
+    # discord_bot/message_collector.py
+    # ... existing code ...
+
+    # 轉換為 MsgNode 格式
+    for processed_msg in processed_messages[::-1]:
+        msg_node = MsgNode(
+            role=processed_msg.role,
+            content=processed_msg.content, # <-- 移除 `if isinstance(...) else str(...)` 轉換
+            metadata={\"user_id\": processed_msg.user_id} if processed_msg.user_id else {}
+        )
+        messages.append(msg_node)
+
+    # ... existing code ...
+    ```
+
+- [ ] **Task 5.1.3**: 確認 `agent_core/graph.py` 中的 LLM 訊息構建
+  - **說明**: 驗證 `_build_planning_prompt` 和 `_generate_final_answer` 等函數在構建 LangChain 的 `HumanMessage` 和 `AIMessage` 時，能夠直接傳遞 `MsgNode.content`。根據 LangChain 文件，這些訊息類別本身就支援多模態內容的列表格式，因此預期此任務無需代碼修改，僅為確認步驟。
+  - **確認點**:
+    *   檢查 `_build_planning_prompt` 和 `_generate_final_answer` 中，對 `HumanMessage(content=msg.content)` 和 `AIMessage(content=msg.content)` 的使用。確認 `msg.content` 會直接傳遞。
+    *   由於 LangChain 內部機制會處理這個列表，因此不需要額外的字串化操作。
+
+**測試驗證**:
+```bash
+# 為了驗證此階段的更改，您可能需要：
+# 1. 在模擬環境中發送一個包含文字和圖片的 Discord 訊息。
+# 2. 追蹤該訊息在 `discord_bot/message_collector.py` 和 `agent_core/graph.py` 中的傳遞過程。
+# 3. 確保 `MsgNode.content` 確實包含了圖片的結構化資料（而不是字串）。
+# 4. 如果可能，嘗試使用一個支援多模態輸入的 LLM 模型（例如 Gemini Vision 模型）來測試其對圖片內容的理解。
+```
+
+#### 預期改進效果
+1.  **真正的多模態支援**: LLM 將能夠直接接收和處理圖片內容，提升理解能力和回應品質。
+2.  **資料流一致性**: 確保圖片資料從 Discord 輸入到 LLM 處理層的完整性。
+3.  **減少資訊損失**: 避免因強制字串轉換而導致的圖片資訊丟失。
+
+### Task 5.2: 端到端測試
 **狀態**: ⏳ 待開始
 
 **目標**: 測試完整的 Discord Bot 流程和所有功能組合
@@ -28,6 +95,7 @@
   - Persona 系統整合
   - 串流回應功能
   - 進度通知系統
+  - **新增**: 包含文字和圖片的訊息處理 (多模態測試)
 
 - [ ] **CLI 介面測試**
   - 命令行參數處理
@@ -51,7 +119,7 @@ from unittest.mock import Mock, AsyncMock
 class TestEndToEndFlow:
     @pytest.mark.asyncio
     async def test_discord_bot_complete_flow(self):
-        """測試 Discord Bot 完整流程"""
+        \"\"\"測試 Discord Bot 完整流程\"\"\"
         # 模擬 Discord 訊息
         mock_message = Mock()
         mock_message.content = "請幫我搜尋最新的 AI 發展"
@@ -68,8 +136,8 @@ class TestEndToEndFlow:
         # 更多驗證...
     
     @pytest.mark.asyncio
-    async def test_agent_with_tools(self):
-        """測試 Agent 工具使用流程"""
+    async def test_agent_with_tools(self):\
+        \"\"\"測試 Agent 工具使用流程\"\"\"
         # 測試計劃生成
         # 測試並行工具執行
         # 測試結果聚合
@@ -78,14 +146,14 @@ class TestEndToEndFlow:
     
     @pytest.mark.asyncio
     async def test_streaming_functionality(self):
-        """測試串流功能"""
+        \"\"\"測試串流功能\"\"\"
         # 測試串流啟用條件
         # 測試串流塊生成
         # 測試 Discord 串流顯示
         pass
     
     def test_persona_integration(self):
-        """測試 Persona 系統整合"""
+        \"\"\"測試 Persona 系統整合\"\"\"
         # 測試 persona 載入
         # 測試 system prompt 構建
         # 測試動態切換
@@ -97,7 +165,7 @@ class TestEndToEndFlow:
 - 覆蓋率達到 80% 以上
 - 無關鍵功能缺失
 
-### Task 5.2: 性能優化
+### Task 5.3: 性能優化
 **狀態**: ⏳ 待開始
 
 **目標**: 優化系統性能，確保響應時間和資源使用合理
@@ -110,7 +178,7 @@ class TestEndToEndFlow:
   
   @functools.lru_cache(maxsize=1)
   def load_typed_config_cached(config_path: str = "config.yaml") -> AppConfig:
-      """快取配置載入結果"""
+      \"\"\"快取配置載入結果\"\"\"
       return AppConfig.from_yaml(config_path)
   ```
 
@@ -138,7 +206,7 @@ from memory_profiler import profile
 
 class TestPerformance:
     def test_config_loading_performance(self):
-        """測試配置載入性能"""
+        \"\"\"測試配置載入性能\"\"\"
         start_time = time.time()
         config = load_typed_config()
         load_time = time.time() - start_time
@@ -147,7 +215,7 @@ class TestPerformance:
     
     @pytest.mark.asyncio
     async def test_agent_response_time(self):
-        """測試 Agent 回應時間"""
+        \"\"\"測試 Agent 回應時間\"\"\"
         start_time = time.time()
         # 執行 Agent
         response_time = time.time() - start_time
@@ -156,7 +224,7 @@ class TestPerformance:
     
     @profile
     def test_memory_usage(self):
-        """測試記憶體使用"""
+        \"\"\"測試記憶體使用\"\"\"
         # 執行完整流程並監控記憶體
         pass
 ```
@@ -167,7 +235,7 @@ class TestPerformance:
 - 串流延遲 < 100ms
 - 記憶體使用穩定，無洩漏
 
-### Task 5.3: 錯誤處理改進
+### Task 5.4: 錯誤處理改進
 **狀態**: ⏳ 待開始
 
 **目標**: 完善所有模組的錯誤處理，實現優雅的降級機制
@@ -177,11 +245,11 @@ class TestPerformance:
   ```python
   # utils/config_loader.py
   class ConfigurationError(Exception):
-      """配置相關錯誤"""
+      \"\"\"配置相關錯誤\"\"\"
       pass
   
   def load_typed_config_with_fallback(config_path: str = "config.yaml") -> AppConfig:
-      """帶回退的配置載入"""
+      \"\"\"帶回退的配置載入\"\"\"
       try:
           return AppConfig.from_yaml(config_path)
       except FileNotFoundError:
@@ -196,7 +264,7 @@ class TestPerformance:
   ```python
   # agent_core/graph.py
   async def _generate_final_answer_with_retry(self, messages: List[MsgNode], context: str) -> str:
-      """帶重試的答案生成"""
+      \"\"\"帶重試的答案生成\"\"\"
       max_retries = 3
       for attempt in range(max_retries):
           try:
@@ -225,7 +293,7 @@ class TestPerformance:
 - 降級機制正常工作
 - 系統不會因單點錯誤崩潰
 
-### Task 5.4: 文檔更新
+### Task 5.5: 文檔更新
 **狀態**: ⏳ 待開始
 
 **目標**: 更新所有相關文檔，確保部署和使用指南完整
@@ -269,13 +337,14 @@ class TestPerformance:
   - 新的架構說明
   - 工具開發指南
   - 測試指南
+  - **新增**: 多模態輸入處理指南
 
 **驗收標準**:
 - 所有文檔與實際實作一致
 - 部署指南可以成功部署
 - 開發者指南清晰易懂
 
-### Task 5.5: 回歸測試
+### Task 5.6: 回歸測試
 **狀態**: ⏳ 待開始
 
 **目標**: 確保重構沒有破壞現有功能
@@ -286,6 +355,7 @@ class TestPerformance:
   - CLI 工具功能
   - 配置系統功能
   - 日誌系統功能
+  - **新增**: 多模態輸入功能驗證 (確保圖片處理正確)
 
 - [ ] **向後相容性測試**
   - 舊配置文件相容性
@@ -337,15 +407,17 @@ make coverage-report
 - [ ] 配置系統手動測試
 - [ ] 串流功能手動測試
 - [ ] Persona 系統手動測試
+- [ ] **新增**: 多模態輸入功能手動測試 (發送圖片訊息並驗證 LLM 回應)
 
 ## 預估時間
-**1 週** (5-7 個工作日)
+**2.5 週** (12-15 個工作日)
 
 ## 風險與注意事項
 1. **測試覆蓋率**: 確保測試覆蓋所有關鍵功能
 2. **性能回歸**: 注意重構可能帶來的性能影響
 3. **相容性問題**: 確保向後相容性
 4. **文檔同步**: 確保文檔與實作同步
+5. **多模態 LLM 支援**: 確保所使用的 Gemini 模型版本確實支援圖片輸入，並能正確解析 Base64 編碼。
 
 ## 成功標準
 - [ ] 所有自動化測試通過
@@ -354,10 +426,12 @@ make coverage-report
 - [ ] 文檔完整更新
 - [ ] 回歸測試通過
 - [ ] 系統穩定性良好
+- [ ] **新增**: 多模態輸入功能正常運作，LLM 能理解圖片內容。
 
 ## 交付物
 - [ ] 完整的測試套件
 - [ ] 性能基準報告
 - [ ] 錯誤處理文檔
 - [ ] 更新的部署指南
-- [ ] 回歸測試報告 
+- [ ] 回歸測試報告
+- [ ] **新增**: 多模態輸入實作與測試報告 

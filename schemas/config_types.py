@@ -65,6 +65,18 @@ class AgentConfig:
 
 
 @dataclass
+class DiscordContextData:
+    """Discord 上下文資料結構"""
+    bot_id: str = ""
+    bot_name: str = ""
+    channel_id: str = ""
+    channel_name: str = ""
+    guild_name: Optional[str] = None
+    user_name: str = ""
+    mentions: List[str] = field(default_factory=list)
+
+
+@dataclass
 class DiscordPermissionsConfig:
     """Discord 權限配置"""
     allow_dms: bool = False
@@ -124,11 +136,13 @@ class LLMConfig:
 
 @dataclass
 class PromptPersonaConfig:
-    """提示詞 Persona 配置"""
+    """提示詞 Persona 配置（統一的系統提示詞管理）"""
     enabled: bool = True
     random_selection: bool = True
     cache_personas: bool = True
-    default_file: str = "default.txt"
+    default_persona: str = "default"
+    persona_directory: str = "persona"
+    fallback: str = "你是一個有用的 AI 助手。"
 
 
 @dataclass
@@ -140,19 +154,10 @@ class PromptDiscordIntegrationConfig:
 
 
 @dataclass
-class PromptSystemPromptConfig:
-    """系統提示詞配置"""
-    use_file: bool = True
-    file: str = "trump.txt"
-    fallback: str = "你是一個有用的 AI 助手。"
-
-
-@dataclass
 class PromptSystemConfig:
     """提示詞系統配置"""
     persona: PromptPersonaConfig = field(default_factory=PromptPersonaConfig)
     discord_integration: PromptDiscordIntegrationConfig = field(default_factory=PromptDiscordIntegrationConfig)
-    system_prompt: PromptSystemPromptConfig = field(default_factory=PromptSystemPromptConfig)
 
 
 @dataclass
@@ -193,7 +198,6 @@ class SystemConfig:
 class DevelopmentConfig:
     """開發與測試配置"""
     debug_mode: bool = False
-    log_level: str = "INFO"
     save_sessions: bool = True
     session_file: str = "sessions.json"
     langgraph_test_mode: bool = False
@@ -342,13 +346,21 @@ class AppConfig:
             'system_prompt_file', 'system_prompt', 'langgraph'
         }
         
+        # 定義字段映射（舊字段名 -> 新字段名）
+        field_mappings = {
+            'default_file': 'default_persona'  # persona 配置中的舊字段
+        }
+        
         for key, value in data.items():
-            if key in field_types:
-                field_type = field_types[key]
+            # 檢查是否需要字段映射
+            actual_key = field_mappings.get(key, key)
+            
+            if actual_key in field_types:
+                field_type = field_types[actual_key]
                 
                 # 處理嵌套 dataclass
                 if hasattr(field_type, '__dataclass_fields__'):
-                    converted_data[key] = cls._dict_to_dataclass(value, field_type)
+                    converted_data[actual_key] = cls._dict_to_dataclass(value, field_type)
                 # 處理 Dict[str, dataclass] 類型
                 elif hasattr(field_type, '__origin__') and field_type.__origin__ is dict:
                     args = getattr(field_type, '__args__', ())
@@ -357,15 +369,15 @@ class AppConfig:
                         converted_dict = {}
                         for k, v in value.items():
                             converted_dict[k] = cls._dict_to_dataclass(v, args[1])
-                        converted_data[key] = converted_dict
+                        converted_data[actual_key] = converted_dict
                     else:
-                        converted_data[key] = value
+                        converted_data[actual_key] = value
                 else:
-                    converted_data[key] = value
-            elif key not in deprecated_fields:
-                # 未知字段但不是已棄用的字段，直接保留（向後相容性）
+                    converted_data[actual_key] = value
+            elif key not in deprecated_fields and key not in field_mappings:
+                # 未知字段但不是已棄用的字段或映射字段，直接保留（向後相容性）
                 converted_data[key] = value
-            # 已棄用的字段會被忽略
+            # 已棄用的字段和映射字段會被忽略或轉換
         
         return dataclass_type(**converted_data)
     

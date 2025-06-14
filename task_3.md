@@ -17,7 +17,7 @@
 ## 子任務
 
 ### Task 3.1: 建立統一的 System Prompt 管理器
-**狀態**: ⏳ 待開始
+**狀態**: ✅ 已完成
 
 **目標**: 建立 `prompt_system/system_prompt_manager.py`，統一處理所有 system prompt 相關邏輯
 
@@ -97,7 +97,7 @@ class SystemPromptManager:
 - 支援 Discord 上下文整合
 
 ### Task 3.2: 建立 Persona 管理器
-**狀態**: ⏳ 待開始
+**狀態**: ✅ 已完成
 
 **目標**: 建立 `prompt_system/persona_manager.py`，整合現有的 persona 選擇邏輯
 
@@ -193,7 +193,7 @@ class PersonaManager:
 - 支援 persona 列表發現
 
 ### Task 3.3: 重構 `agent_core/graph.py` 使用統一 System Prompt
-**狀態**: ⏳ 待開始
+**狀態**: ✅ 已完成
 
 **目標**: 移除 `_generate_final_answer` 中分散的 system prompt 邏輯，使用 `SystemPromptManager` 統一處理
 

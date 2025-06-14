@@ -20,7 +20,7 @@ from google.genai import Client
 
 from schemas.agent_types import OverallState, MsgNode, ToolPlan, AgentPlan, ToolExecutionState
 from utils.config_loader import load_typed_config
-from prompt_system.prompts import web_searcher_instructions, get_current_date
+from prompt_system.prompts import get_current_date, PromptSystem
 from .progress_mixin import ProgressMixin
 from schemas.config_types import AppConfig
 
@@ -55,6 +55,11 @@ class UnifiedAgent(ProgressMixin):
             api_key = self.config.gemini_api_key
             if api_key:
                 self.google_client = Client(api_key=api_key)
+        
+        # 初始化提示詞系統
+        self.prompt_system = PromptSystem(
+            persona_cache_enabled=self.config.prompt_system.persona.cache_personas
+        )
     
     def _initialize_llm_instances(self) -> Dict[str, Optional[ChatGoogleGenerativeAI]]:
         """初始化不同用途的 LLM 實例"""
@@ -178,7 +183,7 @@ class UnifiedAgent(ProgressMixin):
                 )
             else:
                 # 使用 structured output 生成計劃
-                agent_plan = await self._generate_structured_plan(state.messages)
+                agent_plan = await self._generate_structured_plan(state.messages, state.messages_global_metadata)
             
             self.logger.info(f"生成計劃: 需要工具={agent_plan.needs_tools}, 工具數量={len(agent_plan.tool_plans)}")
             
@@ -195,11 +200,11 @@ class UnifiedAgent(ProgressMixin):
                 "finished": True
             }
 
-    async def _generate_structured_plan(self, messages: List[MsgNode]) -> AgentPlan:
+    async def _generate_structured_plan(self, messages: List[MsgNode], messages_global_metadata: str = "") -> AgentPlan:
         """使用 structured output 生成執行計劃"""
         try:
             # 構建計劃生成提示詞
-            plan_prompt = self._build_planning_prompt(messages)
+            plan_prompt = self._build_planning_prompt(messages, messages_global_metadata)
             
             # 由於 LangChain 的 structured output 可能不支援複雜的嵌套結構，
             # 我們先用普通 LLM 生成 JSON，然後手動解析
@@ -240,50 +245,40 @@ class UnifiedAgent(ProgressMixin):
                 reasoning="回退到簡化邏輯"
             )
 
-    def _build_planning_prompt(self, messages: List[MsgNode]) -> List:
-        """構建計劃生成提示詞"""
-        current_date = get_current_date(self.config.system.timezone)
-        
-        system_prompt = f"""
-你是一個智能搜尋計劃生成器。根據用戶的對話歷史，決定是否需要使用工具以及具體的搜尋策略。
-
-當前日期: {current_date}
-
-可用工具:
-- google_search: 用於搜尋最新資訊、事實查證、數據查詢，queries 為搜尋關鍵字，可以輸入 1 ~ 3個
-
-判斷標準:
-- 需要最新資訊、即時數據、新聞事件
-- 需要查找特定事實、數據、統計
-- 涉及當前狀況、最新發展
-- 需要驗證或引用外部資源
-
-請以 JSON 格式回應，包含以下欄位:
-{{
-    "needs_tools": boolean,
-    "reasoning": "決策推理過程",
-    "tool_plans": [
-        {{
-            "tool_name": "google_search",
-            "queries": ["查詢1", "查詢2"],
-            "priority": 1
-        }}
-    ]
-}}
-
-如果不需要工具，tool_plans 應為空陣列。
-"""
-        
-        messages_for_llm = [SystemMessage(content=system_prompt)]
-        
-        # 添加對話歷史
-        for msg in messages:
-            if msg.role == "user":
-                messages_for_llm.append(HumanMessage(content=msg.content))
-            elif msg.role == "assistant":
-                messages_for_llm.append(AIMessage(content=msg.content))
-        
-        return messages_for_llm
+    def _build_planning_prompt(self, messages: List[MsgNode], messages_global_metadata: str = "") -> List:
+        """構建計劃生成提示詞（使用統一 PromptSystem 和工具提示詞檔案），整合全域 metadata"""
+        try:
+            # 使用 PromptSystem 構建基礎 system prompt
+            base_system_prompt = self.prompt_system.get_system_instructions(
+                config=self.config,  # 使用 typed config
+                available_tools=self.config.get_enabled_tools(),
+                messages_global_metadata=messages_global_metadata
+            )
+            
+            # 從檔案讀取計劃生成特定的指令
+            current_date = get_current_date(self.config.system.timezone)
+            planning_instructions = self.prompt_system.get_planning_instructions(
+                current_date=current_date
+            )
+            
+            # 組合完整的 system prompt
+            full_system_prompt = base_system_prompt + "\n\n" + planning_instructions
+            messages_for_llm = [SystemMessage(content=full_system_prompt)]
+            
+            # 添加對話歷史
+            for msg in messages:
+                if msg.role == "user":
+                    messages_for_llm.append(HumanMessage(content=msg.content))
+                elif msg.role == "assistant":
+                    messages_for_llm.append(AIMessage(content=msg.content))
+            
+            return messages_for_llm
+            
+        except Exception as e:
+            self.logger.error(f"構建計劃提示詞失敗: {e}")
+            # 回退到簡化版本
+            fallback_prompt = "你是一個智能助手。請分析用戶的問題並決定是否需要搜尋資訊。"
+            return [SystemMessage(content=fallback_prompt)]
 
     def _parse_plan_response(self, response_content: str) -> Dict[str, Any]:
         """解析計劃回應的 JSON"""
@@ -386,7 +381,7 @@ class UnifiedAgent(ProgressMixin):
             current_date = get_current_date(timezone_str=self.config.system.timezone)
             
             # 準備傳遞給 Gemini 模型的提示
-            formatted_prompt = web_searcher_instructions.format(
+            formatted_prompt = self.prompt_system.get_web_searcher_instructions(
                 research_topic=query,
                 current_date=current_date
             )
@@ -529,7 +524,7 @@ class UnifiedAgent(ProgressMixin):
             
             # 生成最終答案
             try:
-                final_answer = self._generate_final_answer(messages, context)
+                final_answer = self._generate_final_answer(messages, context, state.messages_global_metadata)
             except Exception as e:
                 self.logger.warning(f"LLM 答案生成失敗，使用基本回覆: {e}")
                 final_answer = self._generate_basic_fallback_answer(messages, context)
@@ -579,28 +574,39 @@ class UnifiedAgent(ProgressMixin):
         # 實際的輪次控制由 max_tool_rounds 來處理
         return True
 
-    def _generate_final_answer(self, messages: List[MsgNode], context: str) -> str:
-        """生成最終答案（使用專用 LLM）"""
+    def _generate_final_answer(self, messages: List[MsgNode], context: str, messages_global_metadata: str = "") -> str:
+        """生成最終答案（使用統一 PromptSystem 和工具提示詞檔案），整合全域 metadata"""
         if not messages:
             return "嗯...好像沒有收到你的訊息耶，可以再試一次嗎？😅"
         
         latest_message = messages[-1]
         user_question = latest_message.content
         
-        # 不管有沒有context，都用LLM生成更自然的回應
+        # 使用 PromptSystem 構建系統提示詞
         try:
-            # 構建所有歷史對話的訊息列表，除了當前用戶問題
-
+            # 構建基礎系統提示詞
+            base_system_prompt = self.prompt_system.get_system_instructions(
+                config=self.config,  # 使用 typed config
+                available_tools=[],  # 最終答案生成階段不需要工具描述
+                messages_global_metadata=messages_global_metadata
+            )
+            
+            # 添加上下文資訊（如果有的話）
             if context:
-                messages_for_final_answer = [SystemMessage(
-                    content=f"""
-                    你是一個友善、聰明的聊天助手。請用自然、人性化的方式回答用戶的問題。
-                    以下是你使用工具得到的相關資訊，請用於回答用戶的問題：
-                    {context}
-                    """
-                )]
+                try:
+                    context_prompt = self.prompt_system.get_final_answer_context(
+                        context=context
+                    )
+                    full_system_prompt = base_system_prompt + "\n\n" + context_prompt
+                except Exception as e:
+                    self.logger.warning(f"讀取最終答案上下文提示詞失敗: {e}")
+                    # 回退到硬編碼版本
+                    context_prompt = f"以下是相關資訊：\n{context}\n請基於以上資訊回答。"
+                    full_system_prompt = base_system_prompt + "\n\n" + context_prompt
             else:
-                messages_for_final_answer = [SystemMessage(content="你是一個友善、聰明的聊天助手。請用自然、人性化的方式回答用戶的問題。")]
+                full_system_prompt = base_system_prompt
+            
+            messages_for_final_answer = [SystemMessage(content=full_system_prompt)]
                 
             for msg in messages[:-1]: # 除了最後一條消息（當前用戶問題）
                 if msg.role == "user":

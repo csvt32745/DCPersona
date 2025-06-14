@@ -84,7 +84,8 @@ prompt_system:
     enabled: true          # 是否啟用 Persona
     random_selection: true # 是否隨機選擇 Persona
     cache_personas: true   # 是否快取 Persona
-    default_file: "default.txt"  # 預設 Persona 檔案
+    default_persona: "uika2"  # 預設 Persona 名稱（不包含 .txt）
+    persona_directory: "persona"  # Persona 檔案目錄
   
   # Discord 整合配置
   discord_integration:
@@ -116,7 +117,6 @@ progress:
 # 開發與測試配置
 development:
   debug_mode: false      # 除錯模式
-  log_level: "INFO"      # 日誌等級
   save_sessions: true    # 是否保存會話
   session_file: "sessions.json"  # 會話檔案
   langgraph_test_mode: false     # LangGraph 測試模式

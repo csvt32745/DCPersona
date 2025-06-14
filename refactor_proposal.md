@@ -166,6 +166,72 @@ grep -r "\.get(" --include="*.py" . | grep -v test | grep -v __pycache__
 find . -name "response_formatter.py" | wc -l  # 應該是 0
 ```
 
+### Phase 1.5: 多模態輸入支援 (Multi-modal Input Support)
+
+#### 目標
+實現 LLM 對 Discord 圖片輸入的支援，使其能夠理解並處理包含文字和圖片的訊息。
+
+#### 任務清單
+
+- [ ] **Task 1.5.1**: 修改 `schemas/agent_types.py` 中的 `MsgNode`
+  - **說明**: 將 `MsgNode.content` 的型別從 `str` 修改為 `Union[str, List[Dict[str, Any]]]`，以支援多模態內容的結構化列表。這是確保圖片資訊能在系統內部正確傳遞的基礎。
+  - **修改位置**: `schemas/agent_types.py`
+  - **參考修改**:
+    ```python
+    # schemas/agent_types.py
+    from dataclasses import dataclass, field
+    from typing import List, Dict, Any, Optional, Annotated, Union # <-- 新增 Union
+
+    # ... existing imports ...
+
+    @dataclass
+    class MsgNode:
+        """結構化訊息節點。"""
+        role: str
+        content: Union[str, List[Dict[str, Any]]] # <-- 修改這裡的型別
+        metadata: Dict[str, Any] = field(default_factory=dict)
+    ```
+
+- [ ] **Task 1.5.2**: 修改 `discord_bot/message_collector.py` 中的 `collect_message` 函數
+  - **說明**: 確保在將 `ProcessedMessage` 轉換為 `MsgNode` 時，不再對 `content` 進行強制字串轉換。這樣，圖片的 Base64 編碼結構化資料就能被正確地儲存到 `MsgNode.content` 中。
+  - **修改位置**: `discord_bot/message_collector.py`
+  - **參考修改**:
+    ```python
+    # discord_bot/message_collector.py
+    # ... existing code ...
+    
+    # 轉換為 MsgNode 格式
+    for processed_msg in processed_messages[::-1]:
+        msg_node = MsgNode(
+            role=processed_msg.role,
+            content=processed_msg.content, # <-- 移除 `if isinstance(...) else str(...)` 轉換
+            metadata={"user_id": processed_msg.user_id} if processed_msg.user_id else {}
+        )
+        messages.append(msg_node)
+    
+    # ... existing code ...
+    ```
+
+- [ ] **Task 1.5.3**: 確認 `agent_core/graph.py` 中的 LLM 訊息構建
+  - **說明**: 驗證 `_build_planning_prompt` 和 `_generate_final_answer` 等函數在構建 LangChain 的 `HumanMessage` 和 `AIMessage` 時，能夠直接傳遞 `MsgNode.content`。根據 LangChain 文件，這些訊息類別本身就支援多模態內容的列表格式，因此預期此任務無需代碼修改，僅為確認步驟。
+  - **確認點**:
+    *   檢查 `_build_planning_prompt` 和 `_generate_final_answer` 中，對 `HumanMessage(content=msg.content)` 和 `AIMessage(content=msg.content)` 的使用。確認 `msg.content` 會直接傳遞。
+    *   由於 LangChain 內部機制會處理這個列表，因此不需要額外的字串化操作。
+
+**測試驗證**:
+```bash
+# 為了驗證此階段的更改，您可能需要：
+# 1. 在模擬環境中發送一個包含文字和圖片的 Discord 訊息。
+# 2. 追蹤該訊息在 `discord_bot/message_collector.py` 和 `agent_core/graph.py` 中的傳遞過程。
+# 3. 確保 `MsgNode.content` 確實包含了圖片的結構化資料（而不是字串）。
+# 4. 如果可能，嘗試使用一個支援多模態輸入的 LLM 模型（例如 Gemini Vision 模型）來測試其對圖片內容的理解。
+```
+
+#### 預期改進效果
+1.  **真正的多模態支援**: LLM 將能夠直接接收和處理圖片內容，提升理解能力和回應品質。
+2.  **資料流一致性**: 確保圖片資料從 Discord 輸入到 LLM 處理層的完整性。
+3.  **減少資訊損失**: 避免因強制字串轉換而導致的圖片資訊丟失。
+
 ### Phase 2: 重構 Graph 流程 - 統一工具決策與查詢生成 (1-2 weeks)
 
 #### 目標

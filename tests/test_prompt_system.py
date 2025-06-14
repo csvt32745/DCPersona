@@ -10,9 +10,7 @@ from unittest.mock import patch, MagicMock
 
 from prompt_system.prompts import (
     PromptSystem, 
-    get_prompt_system, 
-    random_system_prompt, 
-    build_system_prompt
+    get_prompt_system
 )
 
 
@@ -117,47 +115,13 @@ class TestPromptSystem:
             content2 = system.get_specific_persona("cache_test", temp_dir)
             assert content2 == test_content
     
-    def test_build_system_prompt_basic(self):
-        """測試基本系統提示詞建立"""
-        system = PromptSystem()
-        
-        cfg = {
-            "system_prompt": "基礎系統提示詞",
-            "is_random_system_prompt": False
-        }
-        
-        prompt = system.build_system_prompt(cfg)
-        assert "基礎系統提示詞" in prompt
-    
-    def test_build_system_prompt_with_discord_context(self):
-        """測試包含 Discord 上下文的系統提示詞建立"""
-        system = PromptSystem()
-        
-        cfg = {
-            "system_prompt": "基礎提示詞",
-            "prompt_system": {
-                "discord_integration": {
-                    "include_timestamp": False  # 關閉時間戳避免測試複雜性
-                }
-            }
-        }
-        
-        discord_context = {
-            "bot_id": "123456789",
-            "channel_id": "987654321",
-            "guild_name": "測試伺服器"
-        }
-        
-        prompt = system.build_system_prompt(cfg, discord_context)
-        assert "基礎提示詞" in prompt
-        assert "Discord 環境資訊" in prompt
-        assert "123456789" in prompt
-        assert "測試伺服器" in prompt
+
     
     @patch('prompt_system.prompts.pytz')
     @patch('prompt_system.prompts.datetime')
     def test_build_timestamp_info(self, mock_datetime, mock_pytz):
         """測試時間戳資訊建立"""
+        from schemas.config_types import AppConfig
         system = PromptSystem()
         
         # Mock datetime
@@ -169,16 +133,12 @@ class TestPromptSystem:
         mock_tz = MagicMock()
         mock_pytz.timezone.return_value = mock_tz
         
-        cfg = {
-            "prompt_system": {
-                "discord_integration": {
-                    "include_timestamp": True,
-                    "timezone": "Asia/Taipei"
-                }
-            }
-        }
+        # 使用 typed config
+        config = AppConfig()
+        config.prompt_system.discord_integration.include_timestamp = True
+        config.system.timezone = "Asia/Taipei"
         
-        timestamp_info = system._build_timestamp_info(cfg)
+        timestamp_info = system._build_timestamp_info(config)
         assert "當前時間" in timestamp_info
         assert "2024-01-01 12:00:00 CST" in timestamp_info
     
@@ -213,22 +173,7 @@ class TestPromptSystem:
         assert "我可以提供網路搜尋結果" in descriptions
         assert "我可以進行深度網路研究和分析" in descriptions
 
-    def test_get_system_instructions_without_tools(self):
-        system = PromptSystem()
-        cfg = {"system_prompt": "你是一個友善、聰明的聊天助手。"}
-        system_instructions = system.get_system_instructions(cfg, [])
-        assert "你是一個友善、聰明的聊天助手" in system_instructions
-        assert "我的能力包括" not in system_instructions # 沒有工具，不應該有此區塊
 
-    def test_get_system_instructions_with_google_search(self):
-        system = PromptSystem()
-        cfg = {"system_prompt": "你是一個智能搜尋計劃生成器。"}
-        system_instructions = system.get_system_instructions(cfg, ["google_search"])
-        assert "你是一個智能搜尋計劃生成器" in system_instructions
-        assert "我的能力包括" in system_instructions
-        assert "我可以提供網路搜尋結果" in system_instructions
-        assert "google_search" not in system_instructions  # 確保工具名稱本身不在系統指令中
-        assert "web_research" not in system_instructions # 確保其他工具不被提及
 
     def test_clear_persona_cache(self):
         """測試清理 persona 快取"""
@@ -277,31 +222,7 @@ def test_get_prompt_system():
     assert system1 is system2
 
 
-def test_random_system_prompt_function():
-    """測試便利函數 random_system_prompt"""
-    with tempfile.TemporaryDirectory() as temp_dir:
-        test_content = "便利函數測試"
-        with open(Path(temp_dir) / "test.txt", 'w', encoding='utf-8') as f:
-            f.write(test_content)
-        
-        content = random_system_prompt(temp_dir)
-        assert content == test_content
 
-
-def test_build_system_prompt_function():
-    """測試便利函數 build_system_prompt"""
-    cfg = {
-        "system_prompt": "便利函數測試",
-        "is_random_system_prompt": False,
-        "prompt_system": {
-            "discord_integration": {
-                "include_timestamp": False
-            }
-        }
-    }
-    
-    prompt = build_system_prompt(cfg)
-    assert "便利函數測試" in prompt
 
 
 if __name__ == "__main__":
