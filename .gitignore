@@ -1,8 +1,7 @@
-# This gitignore is a whitelist. Inspired by https://rgbcu.be/blog/gitignore
-
+.env
+config.yaml
+data/events.json
 
 # Re-ignore __pycache__ directories and .pyc files
-.env
 __pycache__/
 *.pyc
-config.yaml

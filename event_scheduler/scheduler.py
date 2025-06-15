@@ -12,11 +12,14 @@ from typing import Dict, Any, Callable, Optional, List
 from pathlib import Path
 import asyncio
 import logging
+from zoneinfo import ZoneInfo # For Python 3.9+
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.jobstores.memory import MemoryJobStore
 from apscheduler.executors.asyncio import AsyncIOExecutor
 from apscheduler.events import EVENT_JOB_EXECUTED, EVENT_JOB_ERROR
+
+from utils.config_loader import load_typed_config # 導入配置載入器
 
 logger = logging.getLogger(__name__)
 
@@ -35,6 +38,10 @@ class EventScheduler:
         self.data_dir.mkdir(exist_ok=True)
         self.events_file = self.data_dir / "events.json"
         
+        # 載入配置以獲取時區
+        config = load_typed_config()
+        self.timezone = config.system.timezone
+        
         # 初始化 APScheduler
         jobstores = {
             'default': MemoryJobStore()
@@ -50,7 +57,8 @@ class EventScheduler:
         self.scheduler = AsyncIOScheduler(
             jobstores=jobstores,
             executors=executors,
-            job_defaults=job_defaults
+            job_defaults=job_defaults,
+            timezone=self.timezone # 設定時區
         )
         
         # 註冊的回調函數
@@ -100,6 +108,11 @@ class EventScheduler:
         if event_type not in self.callbacks:
             logger.warning(f"事件類型 {event_type} 沒有註冊回調函數")
         
+        # 確保 target_time 具有時區資訊
+        if target_time.tzinfo is None:
+            # 將無時區的 datetime 轉換為帶有配置時區的 datetime
+            target_time = target_time.replace(tzinfo=ZoneInfo(self.timezone))
+            
         # 添加到排程器
         job = self.scheduler.add_job(
             func=self._trigger_callback,
@@ -208,11 +221,15 @@ class EventScheduler:
             with open(self.events_file, 'r', encoding='utf-8') as f:
                 events_data = json.load(f)
             
-            current_time = datetime.now()
+            # 確保 current_time 具有時區資訊
+            current_time = datetime.now(ZoneInfo(self.timezone))
             valid_events = []
             
             for event in events_data:
+                # 確保 target_time 具有時區資訊
                 target_time = datetime.fromisoformat(event['target_time'])
+                if target_time.tzinfo is None:
+                    target_time = target_time.replace(tzinfo=ZoneInfo(self.timezone))
                 
                 # 只載入未來的事件
                 if target_time > current_time:
@@ -258,7 +275,7 @@ class EventScheduler:
                 'event_type': event_type,
                 'event_details': event_details,
                 'target_time': target_time.isoformat(),
-                'created_at': datetime.now().isoformat()
+                'created_at': datetime.now(ZoneInfo(self.timezone)).isoformat() # 使用帶時區的當前時間
             }
             
             # 移除相同 ID 的舊事件（如果存在）

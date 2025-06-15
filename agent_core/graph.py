@@ -605,8 +605,8 @@ class UnifiedAgent(ProgressMixin):
                 elif msg.role == "assistant":
                     messages_for_llm.append(AIMessage(content=msg.content))
                 elif msg.role == "tool":
-                    messages_for_llm.append(HumanMessage(content=msg.content))
-                    messages_for_llm.append(ToolMessage(content=msg.content, tool_call_id=str(msg.metadata.get("tool_call_id"))))
+                    messages_for_llm.append(HumanMessage(content="Tool Result: " + msg.content))
+                    # messages_for_llm.append(ToolMessage(content=msg.content, tool_call_id=str(msg.metadata.get("tool_call_id"))))
             
             
             return messages_for_llm
