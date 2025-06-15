@@ -195,6 +195,15 @@ class SystemConfig:
 
 
 @dataclass
+class ReminderConfig:
+    """提醒功能配置"""
+    enabled: bool = True
+    persistence_file: str = "data/events.json"
+    max_reminders_per_user: int = 10
+    cleanup_expired_events: bool = True
+
+
+@dataclass
 class DevelopmentConfig:
     """開發與測試配置"""
     debug_mode: bool = False
@@ -222,6 +231,7 @@ class AppConfig:
     progress: ProgressConfig = field(default_factory=ProgressConfig)
     development: DevelopmentConfig = field(default_factory=DevelopmentConfig)
     streaming: StreamingConfig = field(default_factory=StreamingConfig)
+    reminder: ReminderConfig = field(default_factory=ReminderConfig)
     
     def __post_init__(self):
         """初始化後處理，載入環境變數"""
@@ -444,6 +454,10 @@ class AppConfig:
         Returns:
             bool: 是否啟用
         """
+        # 特殊處理 reminder 工具
+        if tool_name == "reminder":
+            return self.reminder.enabled
+        
         tool_config = self.get_tool_config(tool_name)
         return tool_config.enabled if tool_config else False
     
@@ -469,6 +483,10 @@ class AppConfig:
         for tool_name, tool_config in self.agent.tools.items():
             if tool_config.enabled:
                 enabled_tools.append((tool_name, tool_config.priority))
+        
+        # 特殊處理 reminder 工具
+        if self.reminder.enabled:
+            enabled_tools.append(("reminder", 2))  # 給 reminder 一個中等優先級
         
         # 按優先級排序
         enabled_tools.sort(key=lambda x: x[1])

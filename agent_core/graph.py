@@ -18,12 +18,16 @@ from langgraph.types import Send
 from langchain_core.runnables import RunnableConfig
 from google.genai import Client
 
-from schemas.agent_types import OverallState, MsgNode, ToolPlan, AgentPlan, ToolExecutionState
+from schemas.agent_types import OverallState, MsgNode, ToolPlan, AgentPlan, ToolExecutionState, ReminderDetails, ToolExecutionResult
 from utils.config_loader import load_typed_config
 from prompt_system.prompts import get_current_date, PromptSystem
 from schemas.config_types import AppConfig
 from .progress_mixin import ProgressMixin
 from .agent_utils import _extract_text_content
+
+# 導入 LangChain 工具
+from tools import GoogleSearchTool, set_reminder
+from langchain_core.messages import ToolMessage
 
 
 class UnifiedAgent(ProgressMixin):
@@ -61,6 +65,9 @@ class UnifiedAgent(ProgressMixin):
         self.prompt_system = PromptSystem(
             persona_cache_enabled=self.config.prompt_system.persona.cache_personas
         )
+        
+        # 初始化並綁定 LangChain 工具
+        self._initialize_tools()
     
     def _initialize_llm_instances(self) -> Dict[str, Optional[ChatGoogleGenerativeAI]]:
         """初始化不同用途的 LLM 實例"""
@@ -93,13 +100,46 @@ class UnifiedAgent(ProgressMixin):
         
         return llm_instances
     
+    def _initialize_tools(self):
+        """初始化並綁定 LangChain 工具到 LLM"""
+        self.available_tools = []
+        self.tool_mapping = {}
+        
+        # 初始化 Google 搜尋工具（如果啟用）
+        if self.config.is_tool_enabled("google_search") and self.google_client:
+            self.google_search_tool = GoogleSearchTool(
+                google_client=self.google_client,
+                prompt_system_instance=self.prompt_system,
+                config=self.config,
+                logger=self.logger
+            )
+            self.available_tools.append(self.google_search_tool)
+            self.tool_mapping[self.google_search_tool.name] = self.google_search_tool
+            self.logger.info("已初始化 Google 搜尋工具")
+        
+        # 初始化提醒工具（如果啟用）
+        if self.config.is_tool_enabled("reminder"):
+            self.available_tools.append(set_reminder)
+            self.tool_mapping[set_reminder.name] = set_reminder
+            self.logger.info("已初始化提醒工具")
+        
+        # 綁定工具到 tool_analysis_llm
+        if self.available_tools and self.tool_analysis_llm:
+            self.tool_analysis_llm = self.tool_analysis_llm.bind_tools(self.available_tools)
+            self.logger.info(f"已綁定 {len(self.available_tools)} 個工具到 LLM")
+        else:
+            if not self.tool_analysis_llm:
+                self.logger.warning("tool_analysis_llm 未初始化，無法綁定工具")
+            elif not self.available_tools:
+                self.logger.warning("沒有可用的工具，使用未綁定工具的 LLM")
+    
     def build_graph(self) -> StateGraph:
         """建立簡化的 LangGraph"""
         builder = StateGraph(OverallState)
         
         # 核心節點
         builder.add_node("generate_query_or_plan", self.generate_query_or_plan)
-        builder.add_node("execute_single_tool", self.execute_single_tool)
+        builder.add_node("execute_tools", self.execute_tools_node)
         builder.add_node("reflection", self.reflection)
         builder.add_node("finalize_answer", self.finalize_answer)
         
@@ -111,13 +151,13 @@ class UnifiedAgent(ProgressMixin):
             "generate_query_or_plan",
             self.route_and_dispatch_tools,
             {
-                "execute_tools": "execute_single_tool",
+                "execute_tools": "execute_tools",
                 "direct_answer": "finalize_answer"
             }
         )
         
         # Connect dispatch node to reflection
-        builder.add_edge("execute_single_tool", "reflection")
+        builder.add_edge("execute_tools", "reflection")
         
         # 反思後的路由決策
         builder.add_conditional_edges(
@@ -132,30 +172,19 @@ class UnifiedAgent(ProgressMixin):
         builder.add_edge("finalize_answer", END)
         return builder.compile()
 
-    def route_after_planning(self, state: OverallState) -> str:
-        """規劃後的路由決策"""
-        agent_plan = state.agent_plan
-        if agent_plan and agent_plan.needs_tools and agent_plan.tool_plans:
-            return "use_tools"
-        else:
-            return "direct_answer"
-
     async def generate_query_or_plan(self, state: OverallState) -> Dict[str, Any]:
         """
-        統一的計劃生成節點：同時決定工具使用和生成查詢
+        統一的計劃生成節點：使用 LangChain 工具綁定的 LLM 進行分析
         
-        參考 Gemini 實作，使用 structured output 一次性決定：
-        1. 是否需要使用工具
-        2. 需要使用哪些工具
-        3. 每個工具的具體查詢參數
+        LLM 會自動決定是否需要調用工具，並生成相應的 tool_calls
         """
         try:
-            self.logger.info("generate_query_or_plan: 開始生成執行計劃")
+            self.logger.info("generate_query_or_plan: 開始分析用戶請求")
             
             # 通知開始階段
             await self._notify_progress(
                 stage="generate_query", 
-                message="🤔 正在分析您的問題並制定搜尋計劃..."
+                message="🤔 正在分析您的問題..."
             )
             
             user_content = _extract_text_content(state.messages[-1].content)
@@ -168,30 +197,51 @@ class UnifiedAgent(ProgressMixin):
                     "tool_round": 0
                 }
             
-            # 使用 structured LLM 生成完整計劃
+            # 使用綁定工具的 LLM 進行分析
             if not self.tool_analysis_llm:
                 # 回退到簡單邏輯
                 needs_tools = self._analyze_tool_necessity_fallback(state.messages)
-                queries = [user_content] if needs_tools else []
-                tool_plans = []
-                if needs_tools and self.google_client:
-                    tool_plans = [ToolPlan(tool_name="google_search", queries=queries)]
-                
                 agent_plan = AgentPlan(
                     needs_tools=needs_tools,
-                    tool_plans=tool_plans,
-                    reasoning="使用簡化邏輯決策"
+                    reasoning="LLM 未可用，使用簡化邏輯決策"
                 )
             else:
-                # 使用 structured output 生成計劃
-                agent_plan = await self._generate_structured_plan(state.messages, state.messages_global_metadata)
+                # system_prompt = ""
+                system_prompt = self._build_planning_system_prompt(state.messages_global_metadata)
+                messages_for_llm = self._build_messages_for_llm(state.messages, system_prompt)
+                ai_message = await self.tool_analysis_llm.ainvoke(messages_for_llm)
+                
+                # 檢查是否有工具調用
+                if ai_message.tool_calls:
+                    # 有工具調用，需要執行工具
+                    logging.debug(f"ai_message.tool_calls: {ai_message.tool_calls}")
+                    agent_plan = AgentPlan(
+                        needs_tools=True,
+                        reasoning=f"LLM 決定調用 {len(ai_message.tool_calls)} 個工具"
+                    )
+                    # 將 tool_calls 存儲在 state 中供後續節點使用
+                    state.metadata = state.metadata or {}
+                    state.metadata["pending_tool_calls"] = ai_message.tool_calls
+                    if ai_message.content:
+                        state.messages.append(MsgNode(
+                            role="assistant",
+                            content=ai_message.content,
+                        ))
+                else:
+                    # 沒有工具調用，直接回答
+                    agent_plan = AgentPlan(
+                        needs_tools=False,
+                        reasoning="LLM 決定直接回答，無需工具"
+                    )
             
-            self.logger.info(f"生成計劃: 需要工具={agent_plan.needs_tools}, 工具數量={len(agent_plan.tool_plans)}")
+            self.logger.info(f"生成計劃: 需要工具={agent_plan.needs_tools}")
             
             return {
                 "agent_plan": agent_plan,
                 "tool_round": state.tool_round + 1,
-                "research_topic": user_content
+                "research_topic": user_content,
+                "metadata": state.metadata,
+                "messages": state.messages,
             }
             
         except Exception as e:
@@ -201,229 +251,201 @@ class UnifiedAgent(ProgressMixin):
                 "finished": True
             }
 
-    async def _generate_structured_plan(self, messages: List[MsgNode], messages_global_metadata: str = "") -> AgentPlan:
-        """使用 structured output 生成執行計劃"""
-        try:
-            # 構建計劃生成提示詞
-            plan_prompt = self._build_planning_prompt(messages, messages_global_metadata)
-            
-            # 由於 LangChain 的 structured output 可能不支援複雜的嵌套結構，
-            # 我們先用普通 LLM 生成 JSON，然後手動解析
-            response = await asyncio.to_thread(self.tool_analysis_llm.invoke, plan_prompt)
-            
-            # 解析 JSON 回應
-            plan_data = self._parse_plan_response(response.content)
-            
-            # 構建 AgentPlan
-            tool_plans = []
-            if plan_data.get("needs_tools", False):
-                for tool_data in plan_data.get("tool_plans", []):
-                    tool_plan = ToolPlan(
-                        tool_name=tool_data.get("tool_name", "google_search"),
-                        queries=tool_data.get("queries", []),
-                        priority=tool_data.get("priority", 1)
-                    )
-                    tool_plans.append(tool_plan)
-            
-            return AgentPlan(
-                needs_tools=plan_data.get("needs_tools", False),
-                tool_plans=tool_plans,
-                reasoning=plan_data.get("reasoning", "")
-            )
-            
-        except Exception as e:
-            self.logger.warning(f"structured plan 生成失敗，回退到簡化邏輯: {e}")
-            # 回退邏輯
-            needs_tools = self._analyze_tool_necessity_fallback(messages)
-            user_text = _extract_text_content(messages[-1].content)
-            queries = [user_text[:100]] if needs_tools else []
-            tool_plans = []
-            if needs_tools and self.google_client:
-                tool_plans = [ToolPlan(tool_name="google_search", queries=queries)]
-            
-            return AgentPlan(
-                needs_tools=needs_tools,
-                tool_plans=tool_plans,
-                reasoning="回退到簡化邏輯"
-            )
-
-    def _build_planning_prompt(self, messages: List[MsgNode], messages_global_metadata: str = "") -> List:
-        """構建計劃生成提示詞（使用統一 PromptSystem 和工具提示詞檔案），整合全域 metadata"""
-        try:
-            # 使用 PromptSystem 構建基礎 system prompt
-            base_system_prompt = self.prompt_system.get_system_instructions(
-                config=self.config,  # 使用 typed config
-                available_tools=self.config.get_enabled_tools(),
-                messages_global_metadata=messages_global_metadata
-            )
-            
-            # 從檔案讀取計劃生成特定的指令
-            current_date = get_current_date(self.config.system.timezone)
-            planning_instructions = self.prompt_system.get_planning_instructions(
-                current_date=current_date
-            )
-            
-            # 組合完整的 system prompt
-            full_system_prompt = base_system_prompt + "\n\n" + planning_instructions
-            messages_for_llm = [SystemMessage(content=full_system_prompt)]
-            
-            # 添加對話歷史
-            for msg in messages:
-                if msg.role == "user":
-                    messages_for_llm.append(HumanMessage(content=msg.content))
-                elif msg.role == "assistant":
-                    messages_for_llm.append(AIMessage(content=msg.content))
-            
-            return messages_for_llm
-            
-        except Exception as e:
-            self.logger.error(f"構建計劃提示詞失敗: {e}")
-            # 回退到簡化版本
-            fallback_prompt = "你是一個智能助手。請分析用戶的問題並決定是否需要搜尋資訊。"
-            return [SystemMessage(content=fallback_prompt)]
-
-    def _parse_plan_response(self, response_content: str) -> Dict[str, Any]:
-        """解析計劃回應的 JSON"""
-        try:
-            # 嘗試提取 JSON
-            if "```json" in response_content:
-                start_marker = "```json"
-                end_marker = "```"
-                start_index = response_content.find(start_marker)
-                end_index = response_content.rfind(end_marker)
-                
-                if start_index != -1 and end_index != -1 and end_index > start_index:
-                    json_str = response_content[start_index + len(start_marker):end_index].strip()
-                    return json.loads(json_str)
-            
-            # 嘗試直接解析
-            if response_content.strip().startswith("{"):
-                return json.loads(response_content.strip())
-            
-            # 如果都失敗，返回預設值
-            return {"needs_tools": False, "tool_plans": [], "reasoning": "JSON 解析失敗"}
-            
-        except json.JSONDecodeError as e:
-            self.logger.warning(f"JSON 解析失敗: {e}")
-            return {"needs_tools": False, "tool_plans": [], "reasoning": "JSON 解析失敗"}
-
-    def route_and_dispatch_tools(self, state: OverallState) -> Any:
+    def route_and_dispatch_tools(self, state: OverallState) -> str:
         """
         規劃後的路由決策：
-        如果需要工具，則返回 Send 物件列表以進行並行執行；
-        否則，返回 "direct_answer" 以直接跳到最終答案。
+        檢查是否需要執行工具
         """
         agent_plan = state.agent_plan
         
-        if agent_plan and agent_plan.needs_tools and agent_plan.tool_plans:
-            # 為每個工具計劃創建並行執行任務
-            sends = []
-            for idx, tool_plan in enumerate(agent_plan.tool_plans):
-                for query_idx, query in enumerate(tool_plan.queries):
-                    sends.append(Send(
-                        "execute_single_tool", 
-                        {
-                            "tool_name": tool_plan.tool_name,
-                            "query": query,
-                            "task_id": f"{idx}_{query_idx}",
-                            "priority": tool_plan.priority
-                        }
-                    ))
-            self.logger.info(f"route_and_dispatch_tools: 正在調度 {len(sends)} 個並行工具執行任務")
-            return sends # 返回 Send 物件列表以進行並行執行
+        if agent_plan and agent_plan.needs_tools:
+            # 檢查是否有待執行的工具調用
+            pending_tool_calls = state.metadata.get("pending_tool_calls") if state.metadata else None
+            if pending_tool_calls:
+                self.logger.info(f"route_and_dispatch_tools: 需要執行 {len(pending_tool_calls)} 個工具")
+                return "execute_tools"
+            else:
+                self.logger.error("route_and_dispatch_tools: 計劃需要工具但沒有待執行的工具調用")
+                return "direct_answer"
         else:
             self.logger.info("route_and_dispatch_tools: 無需工具，直接回答")
-            return "direct_answer" # 返回字符串以直接路由
+            return "direct_answer"
 
-    async def execute_single_tool(self, state: ToolExecutionState) -> Dict[str, Any]:
-        """執行單個工具任務（並行節點）"""
-        tool_name = state.get("tool_name")
-        query = state.get("query")
-        task_id = state.get("task_id")
-        
+    async def execute_tools_node(self, state: OverallState) -> Dict[str, Any]:
+        """執行 LangChain 工具調用"""
         try:
-            self.logger.info(f"執行單個工具: {tool_name}({query})")
+            # 獲取待執行的工具調用
+            pending_tool_calls = state.metadata.get("pending_tool_calls") if state.metadata else None
+            if not pending_tool_calls:
+                self.logger.warning("execute_tools_node: 沒有待執行的工具調用")
+                return {"tool_results": []}
             
-            if tool_name == "google_search":
-                await self._notify_progress(
-                    stage="Tool Execution",
-                    message=f"🤔 正在執行 {tool_name} 工具，查詢關鍵字: {query}",
-                    progress_percentage=50
-                )
-                result = await self._execute_google_search_single(query, task_id)
-            else:
-                await self._notify_progress(
-                    stage="Tool Execution",
-                    message=f"🤔 正在執行 {tool_name} 工具...",
-                    progress_percentage=50
-                )
-                
-                result = f"未知工具: {tool_name}"
+            self.logger.info(f"execute_tools_node: 平行執行 {len(pending_tool_calls)} 個工具調用")
+            
+            # 通知工具執行階段
+            await self._notify_progress(
+                stage="tool_execution",
+                message="🔧 正在平行執行工具...",
+                progress_percentage=50
+            )
+            
+            # 創建平行執行的任務
+            tasks = []
+            for tool_call in pending_tool_calls:
+                task = self._execute_single_tool_call(tool_call)
+                tasks.append(task)
+            
+            # 平行執行所有工具調用
+            tool_results_with_messages = await asyncio.gather(*tasks, return_exceptions=True)
+            
+            # 處理結果
+            new_tool_messages: List[ToolMessage] = []
+            tool_results: List[str] = []
+            
+            for i, result in enumerate(tool_results_with_messages):
+                tool_call = pending_tool_calls[i]
+                tool_call_id = tool_call["id"]
+                tool_name = tool_call["name"]
+                state_update_dict = {}
+                if isinstance(result, Exception):
+                    # 處理異常
+                    self.logger.error(f"工具 {tool_name} 執行異常: {result}")
+                    error_msg = f"工具執行異常: {str(result)}"
+                    tool_message = ToolMessage(
+                        content=error_msg,
+                        tool_call_id=tool_call_id
+                    )
+                    new_tool_messages.append(tool_message)
+                    tool_results.append(error_msg)
+                else:
+                    # 正常結果
+                    tool_message, tool_execution_result = result
+                    new_tool_messages.append(tool_message)
+                    tool_results.append(tool_execution_result.message)
+                    
+                    # 特別處理 set_reminder 工具的成功結果
+                    if tool_name == "set_reminder" and tool_execution_result.success:
+                        state_update_dict.update(await self._process_reminder_result(state, tool_execution_result))
+            
+            # 將 ToolMessage 轉換為 MsgNode 並添加到對話歷史
+            for tool_msg in new_tool_messages:
+                state.messages.append(MsgNode(
+                    role="tool",
+                    content=tool_msg.content,
+                    metadata={"tool_call_id": tool_msg.tool_call_id}
+                ))
+            
+            # 清除已執行的工具調用
+            if state.metadata:
+                state.metadata.pop("pending_tool_calls", None)
+            
+            self.logger.info(f"平行執行完成，共處理 {len(tool_results)} 個工具結果")
             
             return {
-                "tool_results": [result]
-                # "task_id": task_id,
-                # "tool_name": tool_name
-            }
+                "tool_results": tool_results,
+                "metadata": state.metadata,
+                "messages": state.messages,
+            } | state_update_dict # Merge state_update_dict into the return dict
             
         except Exception as e:
-            self.logger.error(f"工具執行失敗 {tool_name}({query}): {e}")
+            self.logger.error(f"execute_tools_node 失敗: {e}")
             return {
                 "tool_results": [],
-                # "task_id": task_id,
                 "error": str(e)
             }
-
-    async def _execute_google_search_single(self, query: str, task_id: str) -> str:
-        """執行單個 Google 搜尋"""
-        if not self.google_client:
-            return f"Google 客戶端未配置，無法執行搜尋: {query}"
+    
+    async def _execute_single_tool_call(self, tool_call: Dict[str, Any]) -> tuple[ToolMessage, ToolExecutionResult]:
+        """執行單個工具調用 - 用於平行執行"""
+        tool_name = tool_call["name"]
+        tool_args = tool_call["args"]
+        tool_call_id = tool_call["id"]
+        
+        self.logger.info(f"執行工具: {tool_name} with args: {tool_args}")
         
         try:
-            current_date = get_current_date(timezone_str=self.config.system.timezone)
+            # 查找對應的工具
+            selected_tool = self.tool_mapping.get(tool_name)
+            if not selected_tool:
+                error_result = ToolExecutionResult(
+                    success=False,
+                    message=f"錯誤：找不到工具 '{tool_name}'"
+                )
+                tool_message = ToolMessage(
+                    content=error_result.message,
+                    tool_call_id=tool_call_id
+                )
+                return tool_message, error_result
             
-            # 準備傳遞給 Gemini 模型的提示
-            formatted_prompt = self.prompt_system.get_web_searcher_instructions(
-                research_topic=query,
-                current_date=current_date
-            )
-            
-            model_name = self.tool_analysis_llm.model
-            # 調用 Gemini API 並啟用 google_search 工具
-            response = self.google_client.models.generate_content(
-                model=model_name,
-                contents=formatted_prompt,
-                config={
-                    "tools": [{"google_search": {}}],
-                    "temperature": 0
-                }
-            )
-            
-            if response.text:
-                # 處理 grounding 和引用
-                # grounding_chunks = []
-                # resolved_urls = {}
-                
-                # # 嘗試提取 grounding_chunks
-                # if response.candidates and len(response.candidates) > 0:
-                #     candidate_0 = response.candidates[0]
-                #     if candidate_0 and hasattr(candidate_0, 'grounding_metadata') and candidate_0.grounding_metadata:
-                #         if hasattr(candidate_0.grounding_metadata, 'grounding_chunks') and candidate_0.grounding_metadata.grounding_chunks:
-                #             grounding_chunks = candidate_0.grounding_metadata.grounding_chunks
-
-                # 處理 URL 解析和引用
-                # try:
-                #     resolved_urls = resolve_urls(grounding_chunks, task_id)
-                #     return response.text
-                # except Exception as e:
-                #     self.logger.warning(f"處理引用失敗: {e}")
-                return response.text
+            # 執行工具
+            if hasattr(selected_tool, 'ainvoke'):
+                raw_result = await selected_tool.ainvoke(tool_args)
+            elif hasattr(selected_tool, 'invoke'):
+                raw_result = selected_tool.invoke(tool_args)
             else:
-                return f"針對查詢「{query}」沒有找到內容。"
+                if asyncio.iscoroutinefunction(selected_tool):
+                    raw_result = await selected_tool(**tool_args)
+                else:
+                    raw_result = selected_tool(**tool_args)
+            
+            # 處理工具結果
+            if isinstance(raw_result, ToolExecutionResult):
+                tool_execution_result = raw_result
+            else:
+                # 如果是字串，嘗試解析為 ToolExecutionResult
+                try:
+                    import json
+                    result_data = json.loads(raw_result)
+                    tool_execution_result = ToolExecutionResult(**result_data)
+                except (json.JSONDecodeError, TypeError, ValueError):
+                    # 如果解析失敗，創建一個簡單的成功結果
+                    tool_execution_result = ToolExecutionResult(
+                        success=True,
+                        message=str(raw_result)
+                    )
+            print(tool_execution_result)
+            # 創建 ToolMessage
+            tool_message = ToolMessage(
+                content=tool_execution_result.message,
+                tool_call_id=tool_call_id
+            )
+            
+            return tool_message, tool_execution_result
                 
         except Exception as e:
-            self.logger.error(f"Google 搜尋失敗: {e}")
-            return f"搜尋執行失敗: {str(e)}"
+            self.logger.error(f"執行工具 {tool_name} 時發生錯誤: {e}")
+            error_result = ToolExecutionResult(
+                success=False,
+                message=f"工具執行錯誤: {str(e)}"
+            )
+            tool_message = ToolMessage(
+                content=error_result.message,
+                tool_call_id=tool_call_id
+            )
+            return tool_message, error_result
+
+    async def _process_reminder_result(self, state: OverallState, tool_execution_result: ToolExecutionResult):
+        """從 ToolExecutionResult 處理提醒工具的執行結果"""
+        try:
+            if tool_execution_result.success and tool_execution_result.data:
+                # 提取 ReminderDetails
+                reminder_data = tool_execution_result.data.get("reminder_details")
+                if reminder_data:
+                    # 確保包含 msg_id 欄位，如果沒有則設為空字串
+                    logging.debug(f"reminder_data: {reminder_data}")
+                    if "msg_id" not in reminder_data:
+                        reminder_data["msg_id"] = ""
+                    reminder_details = ReminderDetails(**reminder_data)
+                    # 添加到 state 的 reminder_requests
+                    if not hasattr(state, "reminder_requests") or state.reminder_requests is None:
+                        state.reminder_requests = []
+                    state.reminder_requests.append(reminder_details)
+                    
+                    self.logger.info(f"成功處理提醒請求: {reminder_details.message}")
+            return {"reminder_requests": state.reminder_requests}
+                    
+        except (KeyError, TypeError) as e:
+            self.logger.error(f"處理提醒結果時發生錯誤: {e}")
+            return {}
 
     def _deduplicate_results(self, results: List[str]) -> List[str]:
         """去重和排序結果"""
@@ -500,6 +522,28 @@ class UnifiedAgent(ProgressMixin):
             self.logger.error(f"decide_next_step 失敗: {e}")
             return "finish"
 
+    def _build_planning_system_prompt(self, messages_global_metadata: str = "") -> str:
+        """構建最終答案的系統提示詞
+        
+        Args:
+            context: 工具結果上下文
+            messages_global_metadata: 全域訊息元數據
+            
+        Returns:
+            str: 完整的系統提示詞
+        """
+        # 使用 PromptSystem 構建基礎系統提示詞
+        
+        context_prompt = self.prompt_system.get_tool_prompt(
+            "planning_instructions"
+        )
+        system_prompt = self.prompt_system.get_system_instructions(
+            config=self.config,
+            messages_global_metadata=context_prompt + "\n\n" + messages_global_metadata
+        )
+        return system_prompt
+            
+
     def _build_final_system_prompt(self, context: str, messages_global_metadata: str) -> str:
         """構建最終答案的系統提示詞
         
@@ -514,7 +558,6 @@ class UnifiedAgent(ProgressMixin):
             # 使用 PromptSystem 構建基礎系統提示詞
             base_system_prompt = self.prompt_system.get_system_instructions(
                 config=self.config,
-                available_tools=[],
                 messages_global_metadata=messages_global_metadata
             )
             
@@ -556,14 +599,15 @@ class UnifiedAgent(ProgressMixin):
             # 構建訊息列表
             messages_for_llm = [SystemMessage(content=system_prompt)]
             
-            for msg in messages[:-1]:  # 除了最後一條消息（當前用戶問題）
+            for msg in messages:
                 if msg.role == "user":
                     messages_for_llm.append(HumanMessage(content=msg.content))
                 elif msg.role == "assistant":
                     messages_for_llm.append(AIMessage(content=msg.content))
+                elif msg.role == "tool":
+                    messages_for_llm.append(HumanMessage(content=msg.content))
+                    messages_for_llm.append(ToolMessage(content=msg.content, tool_call_id=str(msg.metadata.get("tool_call_id"))))
             
-            # 將當前用戶問題作為 HumanMessage 加入
-            messages_for_llm.append(HumanMessage(content=messages[-1].content))
             
             return messages_for_llm
             
@@ -580,7 +624,7 @@ class UnifiedAgent(ProgressMixin):
         """
         LangGraph 節點：生成最終答案（支援串流）
         
-        基於所有可用的信息生成最終回答。
+        基於所有可用的信息生成最終回答，特別處理提醒相關的回覆。
         """
         try:
             self.logger.info("finalize_answer: 生成最終答案")
@@ -591,6 +635,17 @@ class UnifiedAgent(ProgressMixin):
                 message="✍️ 正在整理答案...",
                 progress_percentage=90
             )
+            
+            # 檢查是否有成功的提醒請求
+            if state.reminder_requests:
+                self.logger.info("finalize_answer: 確認提醒完成")
+                
+                # 通知完成
+                await self._notify_progress(
+                    stage="completed",
+                    message="✅ 提醒設定完成！",
+                    progress_percentage=90
+                )
             
             messages = state.messages
             tool_results = state.aggregated_tool_results or state.tool_results or []
@@ -603,6 +658,7 @@ class UnifiedAgent(ProgressMixin):
             # 構建系統提示詞和訊息列表
             system_prompt = self._build_final_system_prompt(context, state.messages_global_metadata)
             messages_for_llm = self._build_messages_for_llm(messages, system_prompt)
+            logging.debug(f"messages_for_llm: {messages_for_llm[1:]}")
             
             # 檢查串流配置
 
@@ -651,8 +707,10 @@ class UnifiedAgent(ProgressMixin):
                     progress_percentage=100
                 )
             
+            if final_answer == "":
+                final_answer = "✅ 回答完成！ (Agent 無言了)"
+                
             self.logger.info("finalize_answer: 答案生成完成")
-            
             return {
                 "final_answer": final_answer,
                 "finished": True,

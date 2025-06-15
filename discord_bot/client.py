@@ -11,14 +11,16 @@ from typing import Dict, Any, Optional
 from utils.config_loader import load_config, load_typed_config
 from .message_handler import get_message_handler
 from schemas.config_types import AppConfig
+from event_scheduler.scheduler import EventScheduler
 
 
-def create_discord_client(config: Optional[AppConfig] = None) -> discord.Client:
+def create_discord_client(config: Optional[AppConfig] = None, event_scheduler: Optional[EventScheduler] = None) -> discord.Client:
     """
     創建和配置 Discord 客戶端實例
     
     Args:
         config: 型別安全的配置實例
+        event_scheduler: 事件排程器實例
         
     Returns:
         discord.Client: 配置好的 Discord 客戶端實例
@@ -50,8 +52,8 @@ def create_discord_client(config: Optional[AppConfig] = None) -> discord.Client:
         invite_url = f"https://discord.com/api/oauth2/authorize?client_id={client_id}&permissions=2048&scope=bot"
         logging.info(f"\n\n🔗 BOT 邀請連結:\n{invite_url}\n")
     
-    # 創建訊息處理器
-    message_handler = get_message_handler(config)
+    # 創建訊息處理器，並將 event_scheduler 傳遞給它
+    message_handler = get_message_handler(config, event_scheduler)
     
     # 統計數據
     _handler_stats = {
@@ -68,6 +70,9 @@ def create_discord_client(config: Optional[AppConfig] = None) -> discord.Client:
         
         logging.info(f"🤖 Discord Bot 已連線: {discord_client.user}")
         logging.info(f"📊 伺服器數量: {len(discord_client.guilds)}")
+        
+        # 設定 discord_client 到 message_handler
+        message_handler.set_discord_client(discord_client)
         
         # 記錄配置資訊
         typed_config = load_typed_config()

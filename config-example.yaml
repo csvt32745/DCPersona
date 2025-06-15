@@ -119,6 +119,13 @@ streaming:
   enabled: true            # 是否啟用串流回應
   min_content_length: 100  # 最小內容長度才啟用串流
 
+# 提醒功能配置
+reminder:
+  enabled: true                    # 是否啟用提醒功能
+  persistence_file: "data/events.json"  # 事件持久化檔案路徑
+  max_reminders_per_user: 10       # 每個用戶最大提醒數量
+  cleanup_expired_events: true     # 是否清理過期事件
+
 # 開發與測試配置
 development:
   debug_mode: false      # 除錯模式

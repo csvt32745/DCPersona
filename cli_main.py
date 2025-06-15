@@ -11,15 +11,25 @@ import logging
 import os
 import base64
 from typing import Dict, Any, Optional, List, Union
+from dataclasses import asdict
+from datetime import datetime
+import uuid
 
 # 設置基本日誌
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 
 from agent_core.graph import create_unified_agent
-from schemas.agent_types import OverallState, MsgNode
+from schemas.agent_types import OverallState, MsgNode, ReminderDetails
 from utils.config_loader import load_typed_config
 from utils.logger import setup_logger
-from schemas.config_types import AppConfig, ConfigurationError
+from schemas.config_types import AppConfig, ConfigurationError, DiscordContextData
+from event_scheduler.scheduler import EventScheduler
+from prompt_system.prompts import get_prompt_system
+
+from langchain.globals import set_verbose, set_debug
+
+set_verbose(True)  # 較簡潔的詳細資訊
+set_debug(True)    # 更詳細的除錯資訊
 
 
 def _load_image_as_base64(image_path: str) -> Optional[Dict[str, Any]]:
@@ -74,6 +84,17 @@ class CLIInterface:
         self.config = config or load_typed_config()
         setup_logger(self.config)
         self.logger = logging.getLogger(__name__)
+        
+        self.event_scheduler = EventScheduler()
+        self.event_scheduler.register_callback(
+            event_type="reminder",
+            callback=self._on_cli_reminder_triggered
+        )
+        self.logger.info("CLI EventScheduler 已初始化並註冊回調函數。")
+
+        self.cli_reminder_triggers: Dict[str, Dict[str, Any]] = {}
+        self.prompt_system = get_prompt_system()
+        self.agent = create_unified_agent(self.config)
         
         # 設置日誌
     
@@ -144,6 +165,103 @@ class CLIInterface:
         except (EOFError, KeyboardInterrupt):
             print("\n操作已取消")
     
+    async def _on_cli_reminder_triggered(self, event_type: str, event_details: Dict[str, Any], event_id: str):
+        """
+        當排程器觸發提醒事件時的回調函數。
+        直接對 Agent 調用，並在 system prompt 中加入提醒內容。
+        """
+        self.logger.info(f"接收到 CLI 提醒觸發事件: {event_id}, 類型: {event_type}")
+        try:
+            reminder_details = ReminderDetails(**event_details)
+            
+            # 儲存提醒觸發資訊到字典中
+            # 使用 event_id 作為 msg_id 的替代，確保唯一性
+            self.cli_reminder_triggers[event_id] = {
+                'is_trigger': True,
+                'content': reminder_details.message
+            }
+            
+            self.logger.info(f"準備觸發 CLI 提醒處理: {reminder_details.message}")
+            
+            # 模擬一個 MsgNode
+            messages = [MsgNode(role="user", content=reminder_details.message)]
+            
+            # 準備初始狀態
+            initial_state = self._prepare_cli_agent_state(
+                messages=messages,
+                is_reminder_trigger=True,
+                reminder_content=reminder_details.message,
+                original_msg_id=event_id # 傳遞 event_id 作為 original_msg_id
+            )
+            
+            print(f"\n🔔 提醒時間到！內容: {reminder_details.message}")
+            print("🤖 正在思考提醒回覆...")
+            
+            # 執行 Agent
+            graph = self.agent.build_graph()
+            result = await graph.ainvoke(initial_state)
+            
+            # 顯示結果
+            final_answer = result.get("final_answer", "抱歉，無法生成提醒回應。")
+            print(f"\n🤖 助手 (提醒回覆): {final_answer}")
+            
+            # 清理提醒觸發資訊
+            if event_id in self.cli_reminder_triggers:
+                self.event_scheduler.cancel_event(event_id)
+                del self.cli_reminder_triggers[event_id]
+                
+        except Exception as e:
+            self.logger.error(f"處理 CLI 提醒觸發事件失敗: {event_id}, 錯誤: {e}", exc_info=True)
+            
+    def _prepare_cli_agent_state(self, messages: List[MsgNode], is_reminder_trigger: bool = False, reminder_content: str = "", original_msg_id: Optional[str] = None) -> OverallState:
+        """
+        準備 Agent 初始狀態，加入 CLI 環境的 metadata (模擬 Discord metadata)。
+        
+        Args:
+            messages: 收集到的訊息資料 (MsgNode 列表)。
+            is_reminder_trigger: 是否為提醒觸發情況。
+            reminder_content: 提醒內容。
+            original_msg_id: 原始訊息 ID 或提醒的 event ID。
+            
+        Returns:
+            OverallState: Agent 初始狀態。
+        """
+        try:
+            # 模擬 Discord context data for CLI
+            discord_context = DiscordContextData(
+                bot_id="cli_bot_id",
+                bot_name="CLI_Bot",
+                channel_id="cli_channel", # 模擬頻道 ID
+                channel_name="cli_console",
+                guild_name=None, # CLI 無伺服器
+                user_id="cli_user_id", # 模擬用戶 ID
+                user_name="CLI_User",
+                mentions=[]
+            )
+            
+            # 使用 PromptSystem 的 _build_discord_context 轉換為字串，傳遞提醒觸發標誌和內容
+            # 確保 config 和 discord_context 是正確的類型
+            discord_metadata = self.prompt_system._build_discord_context(self.config, discord_context, is_reminder_trigger, reminder_content)
+            
+            # 創建初始狀態，將 metadata 加入
+            initial_state = OverallState(
+                messages=messages,
+                tool_round=0,
+                finished=False,
+                messages_global_metadata=discord_metadata
+            )
+            
+            return initial_state
+            
+        except Exception as e:
+            self.logger.warning(f"格式化 CLI metadata 失敗: {e}")
+            return OverallState(
+                messages=messages,
+                tool_round=0,
+                finished=False,
+                messages_global_metadata=""
+            )
+
     async def start_conversation(self):
         """開始對話模式"""
         print("\n💬 對話模式已啟動")
@@ -200,17 +318,41 @@ class CLIInterface:
                 messages = [MsgNode(role="user", content=content_for_msg_node)]
                 
                 # 創建初始狀態
-                initial_state = OverallState(
-                    messages=messages,
-                    tool_round=0,
-                    finished=False
-                )
+                initial_state = self._prepare_cli_agent_state(messages=messages)
                 
                 print("🤖 正在思考...")
                 
                 # 執行 Agent
                 graph = agent.build_graph()
                 result = await graph.ainvoke(initial_state)
+                
+                # 處理提醒請求
+                reminder_requests: List[ReminderDetails] = result.get("reminder_requests", [])
+                if reminder_requests:
+                    for reminder_detail in reminder_requests:
+                        try:
+                            # 為 CLI 環境模擬 channel_id, user_id, msg_id
+                            reminder_detail.channel_id = "cli_channel"
+                            reminder_detail.user_id = "cli_user_id"
+                            reminder_detail.msg_id = str(uuid.uuid4()) # 生成唯一的 msg_id
+                            
+                            # 將 final answer 加入到提醒內容中
+                            final_answer_for_reminder = result.get("final_answer", "")
+                            if final_answer_for_reminder:
+                                reminder_detail.message = f"{reminder_detail.message}\n\n之前的回覆：{final_answer_for_reminder}"
+                            
+                            # 解析目標時間
+                            target_time = datetime.fromisoformat(reminder_detail.target_timestamp)
+                            
+                            await self.event_scheduler.schedule_event(
+                                event_type="reminder",
+                                event_details=asdict(reminder_detail), # 使用 model_dump 將 dataclass 轉為 dict
+                                target_time=target_time,
+                                event_id=reminder_detail.reminder_id
+                            )
+                            self.logger.info(f"已成功排程 CLI 提醒: {reminder_detail.message} 於 {target_time}")
+                        except Exception as e:
+                            self.logger.error(f"排程 CLI 提醒失敗: {reminder_detail.message}, 錯誤: {e}", exc_info=True)
                 
                 # 顯示結果
                 final_answer = result.get("final_answer", "抱歉，無法生成回應。")
@@ -266,7 +408,17 @@ async def main():
         
         # 創建並運行 CLI
         cli = CLIInterface(config)
-        await cli.run()
+        # 啟動排程器
+        scheduler_task = asyncio.create_task(cli.event_scheduler.start())
+        try:
+            await cli.run()
+        finally:
+            scheduler_task.cancel()
+            try:
+                await scheduler_task # 等待排程器任務完成清理
+            except asyncio.CancelledError:
+                pass
+            await cli.event_scheduler.shutdown() # 確保 EventScheduler 關閉
         
     except ConfigurationError as e:
         print(f"❌ 配置錯誤: {e}")

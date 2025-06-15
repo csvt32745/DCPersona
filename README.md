@@ -29,6 +29,10 @@
   - [CLI 測試介面](#cli-測試介面)
   - [Discord 互動方式](#discord-互動方式)
 - [專案架構](#專案架構)
+- [工具系統 (Tool System)](#工具系統-tool-system)
+  - [支援工具](#支援工具)
+    - [🌐 Google Search](#-google-search)
+    - [⏰ 設定提醒 (`set_reminder`)](#-設定提醒-set_reminder)
 - [配置系統](#配置系統)
   - [配置特色](#配置特色)
 - [測試](#測試)
@@ -149,6 +153,7 @@ CLI 模式提供：
 - **自然對話**: 直接與 Bot 對話，支援文字和圖片
 - **多輪對話**: 保持對話上下文，支援連續提問
 - **智能研究**: 複雜問題自動啟動多步驟搜尋和分析
+- **設定提醒**: 透過 "提醒我..."、"設定提醒..." 等自然語言來設定排程。
 
 ---
 
@@ -160,6 +165,13 @@ DCPersona/
 ├── main.py                  # Discord Bot 主程式入口
 ├── cli_main.py              # CLI 測試介面
 ├── config.yaml              # 型別安全配置檔
+├── tools/                   # LangChain 工具定義
+│   ├── google_search.py     # Google 搜尋工具
+│   └── set_reminder.py      # 設定提醒工具
+│
+├── event_scheduler/         # 通用事件排程系統
+│   └── scheduler.py         # 排程器核心
+│
 ├── personas/                # Agent 人格系統提示詞
 │
 ├── discord_bot/             # Discord 整合層
@@ -171,7 +183,6 @@ DCPersona/
 │
 ├── agent_core/              # 統一 Agent 引擎
 │   ├── graph.py             # LangGraph 核心實現
-│   ├── agent_session.py     # 會話狀態管理
 │   ├── agent_utils.py       # Agent 輔助函式
 │   ├── progress_observer.py # 進度觀察者介面
 │   └── progress_mixin.py    # 進度更新混入
@@ -194,7 +205,26 @@ DCPersona/
     └── ...                  # 單元與整合測試
 ```
 
-詳細架構說明請參考 [`DCPersona_structure.md`](project_structure.md)
+詳細架構說明請參考 [`project_structure.md`](project_structure.md)
+
+---
+
+## 工具系統 (Tool System)
+
+DCPersona 透過 LangChain 的工具系統，賦予 Agent 與外部世界互動的能力。
+
+### 支援工具
+
+#### 🌐 Google Search
+- **功能**: 提供即時的網路搜尋能力，用於回答需要最新資訊或外部知識的問題。
+- **觸發方式**: 當使用者提問內容涉及 Agent 自身知識庫以外的資訊時，將自動觸發。
+
+#### ⏰ 設定提醒 (`set_reminder`)
+- **功能**: 讓使用者可以透過自然語言設定提醒。
+- **使用範例**:
+  - `"提醒我 10 分鐘後喝水"`
+  - `"明天早上九點提醒我開會"`
+- **運作方式**: Agent 解析時間和提醒內容後，將其交由內建的事件排程系統處理，並在指定時間到達時發送通知。
 
 ---
 

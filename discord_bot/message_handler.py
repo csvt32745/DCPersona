@@ -7,17 +7,21 @@ Discord 訊息處理器
 
 import logging
 import asyncio
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List
 import discord
 import httpx
+import uuid
+from datetime import datetime
+from dataclasses import asdict
 
 from agent_core.graph import create_unified_agent
-from schemas.agent_types import OverallState, MsgNode
+from schemas.agent_types import OverallState, MsgNode, ReminderDetails, ToolExecutionResult
 from schemas.config_types import AppConfig, DiscordContextData
 from utils.config_loader import load_typed_config
 from prompt_system.prompts import get_prompt_system
 from .progress_adapter import DiscordProgressAdapter
 from .message_collector import collect_message, CollectedMessages
+from event_scheduler.scheduler import EventScheduler
 
 
 class DiscordMessageHandler:
@@ -26,11 +30,12 @@ class DiscordMessageHandler:
     統一的 Discord 訊息處理入口，使用新的統一 Agent 架構
     """
     
-    def __init__(self, config: Optional[AppConfig] = None):
+    def __init__(self, config: Optional[AppConfig] = None, event_scheduler: Optional[EventScheduler] = None):
         """初始化 Discord 訊息處理器
         
         Args:
             config: 型別安全的配置實例，如果為 None 則載入預設配置
+            event_scheduler: 事件排程器實例
         """
         self.config = config or load_typed_config()
         self.logger = logging.getLogger(__name__)
@@ -45,8 +50,30 @@ class DiscordMessageHandler:
         # 初始化 httpx 客戶端
         self.httpx_client = httpx.AsyncClient()
 
+        # 儲存 EventScheduler 實例
+        self.event_scheduler = event_scheduler
+        self.discord_client = None  # 將在 on_ready 事件中設定
+        
+        # 提醒觸發資訊儲存（避免直接修改 Discord Message 物件）
+        self.reminder_triggers: Dict[str, Dict[str, Any]] = {}
+        
+        # 註冊提醒觸發回調函數
+        if self.event_scheduler:
+            self.event_scheduler.register_callback(
+                event_type="reminder",
+                callback=self._on_reminder_triggered
+            )
+            self.logger.info("已註冊提醒觸發回調函數。")
+        else:
+            self.logger.warning("EventScheduler 未傳入 DiscordMessageHandler，提醒功能可能無法正常運作。")
+
         logging.info(f"Agent 測試初始化")
         self.agent = create_unified_agent(self.config)
+    
+    def set_discord_client(self, discord_client):
+        """設定 Discord 客戶端實例"""
+        self.discord_client = discord_client
+        self.logger.info("Discord 客戶端已設定")
         
     async def handle_message(self, message: discord.Message) -> bool:
         """處理 Discord 訊息
@@ -150,11 +177,13 @@ class DiscordMessageHandler:
             await self.httpx_client.aclose()
             self.logger.info("httpx 客戶端已關閉")
 
-    def _format_discord_metadata(self, message: discord.Message) -> str:
+    def _format_discord_metadata(self, message: discord.Message, is_reminder_trigger: bool = False, reminder_content: str = "") -> str:
         """將 Discord 訊息轉換為 metadata 字串
         
         Args:
             message: Discord 訊息物件
+            is_reminder_trigger: 是否為提醒觸發情況
+            reminder_content: 提醒內容
             
         Returns:
             str: 格式化的 Discord metadata 字串
@@ -172,8 +201,8 @@ class DiscordMessageHandler:
                 mentions=[f"<@{user.id}> ({user.display_name})" for user in message.mentions if user.id != message.guild.me.id]
             )
             
-            # 使用 PromptSystem 的 _build_discord_context 轉換為字串
-            return self.prompt_system._build_discord_context(self.config, discord_context)
+            # 使用 PromptSystem 的 _build_discord_context 轉換為字串，傳遞提醒觸發標誌和內容
+            return self.prompt_system._build_discord_context(self.config, discord_context, is_reminder_trigger, reminder_content)
             
         except Exception as e:
             self.logger.warning(f"格式化 Discord metadata 失敗: {e}")
@@ -192,8 +221,17 @@ class DiscordMessageHandler:
         # 從 CollectedMessages 結構中獲取訊息
         messages = collected_messages.messages
         
-        # 格式化 Discord metadata
-        discord_metadata = self._format_discord_metadata(original_message)
+        # 檢測是否為提醒觸發情況
+        message_id = str(original_message.id)
+        reminder_info = self.reminder_triggers.get(message_id, {})
+        is_reminder_trigger = reminder_info.get('is_trigger', False)
+        reminder_content = reminder_info.get('content', "")
+        # 獲取提醒內容
+        if is_reminder_trigger:
+            messages[-1].content = messages[-1].content + "\n" + f"(提醒觸發提示: {reminder_content}，請勿短時間內重複提醒)"
+        
+        # 格式化 Discord metadata，傳遞提醒觸發標誌和內容
+        discord_metadata = self._format_discord_metadata(original_message, is_reminder_trigger, reminder_content)
         
         # 創建初始狀態，將 metadata 加入
         initial_state = OverallState(
@@ -202,6 +240,10 @@ class DiscordMessageHandler:
             finished=False,
             messages_global_metadata=discord_metadata
         )
+        
+        # 清理提醒觸發資訊（避免記憶體洩漏）
+        if message_id in self.reminder_triggers:
+            del self.reminder_triggers[message_id]
         
         return initial_state
     
@@ -217,8 +259,43 @@ class DiscordMessageHandler:
             progress_adapter: Discord 進度適配器
         """
         try:
-            # 檢查是否有最終答案
+            # 獲取 final answer 以便加入到提醒中
             final_answer = result.get("final_answer", "")
+            
+            # 處理提醒請求
+            reminder_requests: List[ReminderDetails] = result.get("reminder_requests", [])
+            if reminder_requests:
+                # 從 progress_adapter 獲取原始訊息以填入 channel_id 和 user_id
+                original_message = progress_adapter.original_message
+                
+                for reminder_detail in reminder_requests:
+                    try:
+                        # 填入 Discord 相關資訊
+                        reminder_detail.channel_id = str(original_message.channel.id)
+                        reminder_detail.user_id = str(original_message.author.id)
+                        reminder_detail.msg_id = str(original_message.id)
+                        
+                        # 將 final answer 加入到提醒內容中
+                        if final_answer:
+                            reminder_detail.message = f"{reminder_detail.message}\n\n之前的回覆：{final_answer}"
+                        
+                        # 解析目標時間
+                        target_time = datetime.fromisoformat(reminder_detail.target_timestamp)
+                        
+                        if self.event_scheduler:
+                            await self.event_scheduler.schedule_event(
+                                event_type="reminder",
+                                event_details=asdict(reminder_detail),
+                                target_time=target_time,
+                                event_id=reminder_detail.reminder_id
+                            )
+                            self.logger.info(f"已成功排程提醒: {reminder_detail.message} 於 {target_time}")
+                        else:
+                            self.logger.warning("Event scheduler 未初始化或不可用，無法排程提醒。")
+                    except Exception as e:
+                        self.logger.error(f"排程提醒失敗: {reminder_detail.message}, 錯誤: {e}", exc_info=True)
+            
+            # 檢查是否有最終答案（已在上面獲取過）
             sources = result.get("sources", [])
             
             if final_answer:
@@ -245,8 +322,8 @@ class DiscordMessageHandler:
             bool: 是否應該處理
         """
         try:
-            # 基本檢查
-            if message.author.bot:
+            # 基本檢查 - 但允許處理提醒觸發的模擬訊息
+            if message.author.bot and not message.content.startswith("提醒："):
                 return False
             
             if not message.content.strip():
@@ -367,16 +444,53 @@ class DiscordMessageHandler:
         
         return True
 
+    async def _on_reminder_triggered(self, event_type: str, event_details: Dict[str, Any], event_id: str):
+        """
+        當排程器觸發提醒事件時的回調函數。
+        直接對原始訊息調用 handle_message，並在 system prompt 中加入提醒內容。
+        """
+        self.logger.info(f"接收到提醒觸發事件: {event_id}, 類型: {event_type}")
+        try:
+            reminder_details = ReminderDetails(**event_details)
+            
+            # 透過 msg_id fetch 原始訊息
+            try:
+                channel = self.discord_client.get_channel(int(reminder_details.channel_id))
+                if channel:
+                    original_message: discord.Message = await channel.fetch_message(int(reminder_details.msg_id))
+                    
+                    self.logger.info(f"找到原始訊息，準備觸發提醒處理: {reminder_details.message}")
+                    
+                    # 儲存提醒觸發資訊到字典中（避免直接修改 Discord Message 物件）
+                    message_id = str(original_message.id)
+                    self.reminder_triggers[message_id] = {
+                        'is_trigger': True,
+                        'content': reminder_details.message
+                    }
+                    
+                    # 直接調用 handle_message 處理原始訊息
+                    await self.handle_message(original_message)
+                else:
+                    self.logger.error(f"無法找到頻道進行提醒處理: channel_id={reminder_details.channel_id}")
+            except Exception as fetch_error:
+                self.logger.error(f"無法 fetch 原始訊息: msg_id={reminder_details.msg_id}, 錯誤: {fetch_error}")
+                
+        except Exception as e:
+            self.logger.error(f"處理提醒觸發事件失敗: {event_id}, 錯誤: {e}", exc_info=True)
+
+
+
 
 # 全域處理器實例
 _message_handler: Optional[DiscordMessageHandler] = None
 
 
-def get_message_handler(config: Optional[AppConfig] = None) -> DiscordMessageHandler:
+def get_message_handler(config: Optional[AppConfig] = None, event_scheduler: Optional[EventScheduler] = None) -> DiscordMessageHandler:
     """獲取訊息處理器實例（單例模式）
     
     Args:
         config: 型別安全的配置實例
+        event_scheduler: 事件排程器實例
         
     Returns:
         DiscordMessageHandler: 訊息處理器實例
@@ -384,7 +498,7 @@ def get_message_handler(config: Optional[AppConfig] = None) -> DiscordMessageHan
     global _message_handler
     
     if _message_handler is None:
-        _message_handler = DiscordMessageHandler(config)
+        _message_handler = DiscordMessageHandler(config, event_scheduler)
     
     return _message_handler
 

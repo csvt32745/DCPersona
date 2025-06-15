@@ -20,12 +20,32 @@ class ToolPlan:
     metadata: Dict[str, Any] = field(default_factory=dict)
 
 
-@dataclass 
+@dataclass
 class AgentPlan:
     """Agent 執行計劃"""
     needs_tools: bool
-    tool_plans: List[ToolPlan] = field(default_factory=list)
+    tool_calls: List[ToolPlan] = field(default_factory=list)
     reasoning: str = ""  # 決策推理過程
+
+
+@dataclass
+class ReminderDetails:
+    """提醒詳細資料"""
+    message: str
+    target_timestamp: str  # ISO 8601 格式
+    channel_id: str
+    user_id: str
+    msg_id: str  # 原始訊息 ID，用於回覆
+    reminder_id: Optional[str] = None
+    metadata: Dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
+class ToolExecutionResult:
+    """工具執行結果"""
+    success: bool
+    message: str
+    data: Optional[Any] = None
 
 
 @dataclass
@@ -53,6 +73,12 @@ class OverallState:
     
     # 全域訊息 metadata
     messages_global_metadata: str = ""
+    
+    # 提醒請求專用欄位
+    reminder_requests: List[ReminderDetails] = field(default_factory=list)
+    
+    # 通用 metadata 欄位（用於存儲臨時資料，如 pending_tool_calls）
+    metadata: Optional[Dict[str, Any]] = field(default_factory=dict)
     
     # 向後相容性欄位（保留舊的欄位以避免破壞現有代碼）
     needs_tools: bool = False

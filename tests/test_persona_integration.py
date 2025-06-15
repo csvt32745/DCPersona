@@ -32,35 +32,19 @@ class TestPromptSystem:
     
     def test_get_system_instructions_with_typed_config(self):
         """測試使用 typed config 的 get_system_instructions"""
-        available_tools = ["google_search"]
-        
         # 測試基本功能
         result = self.prompt_system.get_system_instructions(
-            config=self.test_config,
-            available_tools=available_tools
+            config=self.test_config
         )
         
         assert isinstance(result, str)
         assert len(result) > 0
         
-    def test_get_planning_instructions_success(self):
-        """測試成功讀取計劃指令"""
-        # 確保測試文件存在
-        tool_prompts_dir = Path("prompt_system/tool_prompts")
-        planning_file = tool_prompts_dir / "planning_instructions.txt"
-        
-        if planning_file.exists():
-            try:
-                result = self.prompt_system.get_planning_instructions(
-                    current_date="2024-12-19"
-                )
-                assert isinstance(result, str)
-                assert "2024-12-19" in result
-                # 應該包含 JSON 模板
-                assert "範例格式" in result or "needs_tools" in result
-            except Exception as e:
-                # 如果檔案不存在，應該有回退機制
-                assert "請分析用戶問題" in str(e) or isinstance(result, str)
+    def test_get_planning_instructions_removed(self):
+        """測試 get_planning_instructions 方法已被移除"""
+        # 這個方法已經被移除，因為 LangChain 會自動處理工具調用
+        # 這個測試只是為了確認方法不存在
+        assert not hasattr(self.prompt_system, 'get_planning_instructions')
     
     def test_get_tool_prompt_missing_file(self):
         """測試讀取不存在的工具提示詞檔案"""
@@ -136,13 +120,14 @@ class TestUnifiedAgentIntegration:
         from schemas.agent_types import MsgNode
         messages = [MsgNode(role="user", content="今天天氣如何？")]
         
+        # 測試 system prompt 構建
         try:
-            result = agent._build_planning_prompt(messages, "")  # 傳入空的 metadata
-            assert isinstance(result, list)
-            assert len(result) > 0
+            system_prompt = agent._build_final_system_prompt("", "")
+            assert isinstance(system_prompt, str)
+            assert len(system_prompt) > 0
         except Exception as e:
             # 如果工具提示詞檔案不存在或格式問題，應該有適當的錯誤處理
-            assert "構建計劃提示詞失敗" in str(e) or isinstance(result, list)
+            assert "構建" in str(e) or "失敗" in str(e)
 
 
 if __name__ == "__main__":

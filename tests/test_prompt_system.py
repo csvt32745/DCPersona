@@ -12,6 +12,7 @@ from prompt_system.prompts import (
     PromptSystem, 
     get_prompt_system
 )
+from utils.config_loader import load_typed_config
 
 
 class TestPromptSystem:
@@ -142,36 +143,7 @@ class TestPromptSystem:
         assert "當前時間" in timestamp_info
         assert "2024-01-01 12:00:00 CST" in timestamp_info
     
-    def test_generate_tool_descriptions(self):
-        """測試工具說明生成"""
-        system = PromptSystem()
-        
-        tools = ["google_search"]
-        descriptions = system.generate_tool_descriptions(tools)
-        
-        assert "我的能力包括" in descriptions
-        assert "我可以提供網路搜尋結果" in descriptions
-        assert "來源引用" not in descriptions # Ensure citation is removed
-    
-    def test_generate_tool_descriptions_empty(self):
-        system = PromptSystem()
-        descriptions = system.generate_tool_descriptions([])
-        assert "我的能力包括" not in descriptions
-        assert "沒有可用的工具" not in descriptions # This assertion was incorrect, empty should return empty string.
 
-    def test_generate_tool_descriptions_unsupported(self):
-        system = PromptSystem()
-        descriptions = system.generate_tool_descriptions(["unsupported_tool"])
-        assert "我的能力包括" not in descriptions  # 修正：不應包含此字串
-        assert descriptions == ""  # 修正：應返回空字串
-
-    def test_generate_tool_descriptions_multiple(self):
-        system = PromptSystem()
-        descriptions = system.generate_tool_descriptions(["google_search", "web_research"])
-        
-        assert "我的能力包括" in descriptions
-        assert "我可以提供網路搜尋結果" in descriptions
-        assert "我可以進行深度網路研究和分析" in descriptions
 
 
 
@@ -222,8 +194,33 @@ def test_get_prompt_system():
     assert system1 is system2
 
 
-
+class TestPromptSystemLangChainAdaptation:
+    """測試 PromptSystem 對 LangChain 工具綁定的適配"""
+    
+    def setup_method(self):
+        """設置測試環境"""
+        self.prompt_system = PromptSystem()
+        self.config = load_typed_config()
+    
+    def test_get_system_instructions_without_tools(self):
+        """測試不使用工具時的系統指令生成"""
+        result = self.prompt_system.get_system_instructions(
+            config=self.config,
+            messages_global_metadata="測試 metadata"
+        )
+        
+        # 應該包含基本的系統指令
+        assert isinstance(result, str)
+        assert len(result) > 0
 
 
 if __name__ == "__main__":
-    pytest.main([__file__, "-v"]) 
+    # 運行基本測試
+    test_instance = TestPromptSystemLangChainAdaptation()
+    test_instance.setup_method()
+    
+    test_instance.test_get_system_instructions_without_tools()
+    test_instance.test_get_system_instructions_with_deprecated_tools_param()
+    test_instance.test_backward_compatibility()
+    
+    print("PromptSystem LangChain 適配測試通過！") 

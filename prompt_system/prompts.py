@@ -98,15 +98,16 @@ class PromptSystem:
     def get_system_instructions(
         self,
         config: AppConfig,
-        available_tools: List[str],
         messages_global_metadata: str = ""
     ) -> str:
         """
-        獲取完整的系統指令，包括 persona、工具說明、時間戳等
+        獲取完整的系統指令，包括 persona、時間戳等
+        
+        注意：由於 LangChain 工具綁定會自動處理工具描述，
+        此方法不再需要手動生成工具說明。
         
         Args:
             config: 型別化配置實例
-            available_tools: 可用的工具列表
             messages_global_metadata: 全域訊息 metadata
         
         Returns:
@@ -142,11 +143,9 @@ class PromptSystem:
             if persona_cfg.fallback:
                 prompt_parts.append(persona_cfg.fallback.strip())
 
-        # 2. 工具描述
-        tool_descriptions = self.generate_tool_descriptions(available_tools)
-        if tool_descriptions:
-            prompt_parts.append(tool_descriptions)
-
+        # 2. 工具描述 - 已移除，由 LangChain 自動處理
+        # LangChain 的 bind_tools 會自動將工具描述注入到模型中
+        
         # 3. 時間戳資訊
         timestamp_info = self._build_timestamp_info(config)
         if timestamp_info:
@@ -166,7 +165,9 @@ class PromptSystem:
     def _build_discord_context(
         self,
         config: AppConfig,
-        discord_context: DiscordContextData = None
+        discord_context: DiscordContextData = None,
+        is_reminder_trigger: bool = False,
+        reminder_content: str = ""
     ) -> str:
         """建立 Discord 特定上下文"""
         if discord_context is None:
@@ -205,6 +206,10 @@ class PromptSystem:
         if discord_integration_cfg.include_user_context and discord_context.user_name and discord_context.user_id:
             context_parts.append(f"最新訊息用戶: <@{discord_context.user_id}> {discord_context.user_name}")
             
+        # 檢查是否為提醒觸發情況
+        if is_reminder_trigger:
+            context_parts.append(self.get_tool_prompt("on_reminder_triggered", reminder_content=reminder_content))
+        
         if context_parts:
             return "Discord 環境資訊:\n" + "\n".join(context_parts)
         
@@ -229,25 +234,7 @@ class PromptSystem:
             self.logger.warning(f"生成時間戳資訊時出錯: {e}")
             return ""
     
-    def generate_tool_descriptions(self, available_tools: List[str]) -> str:
-        """動態生成工具說明"""
-        if not available_tools:
-            return ""
-        
-        tool_descriptions = {
-            "google_search": "我可以提供網路搜尋結果",
-            "web_research": "我可以進行深度網路研究和分析"
-        }
-        
-        descriptions = []
-        for tool in available_tools:
-            if tool in tool_descriptions:
-                descriptions.append(f"- {tool_descriptions[tool]}")
-        
-        if descriptions:
-            return f"我的能力包括:\n" + "\n".join(descriptions)
-        
-        return ""
+
     
     def clear_persona_cache(self):
         """清理 persona 快取"""
@@ -306,25 +293,6 @@ class PromptSystem:
             self.logger.error(f"讀取或格式化工具提示詞失敗 {prompt_file}: {e}")
             raise
     
-    def get_planning_instructions(self, current_date: str) -> str:
-        """獲取計劃指令，包含 JSON 模板"""
-        try:
-            # 載入基本指令
-            base_instructions = self.get_tool_prompt("planning_instructions", current_date=current_date)
-            self.logger.debug(f"載入規劃指令: {base_instructions}")
-            
-            # 載入 JSON 模板
-            json_template = self._load_json_template("planning_json_template")
-            self.logger.debug(f"載入 JSON 模板: {json_template}")
-            
-            if json_template:
-                return f"{base_instructions}\n\n範例格式:\n{json_template}"
-            else:
-                return base_instructions
-                
-        except Exception as e:
-            self.logger.error(f"獲取計劃指令失敗: {e}")
-            return f"請分析用戶問題並決定是否需要搜尋。當前日期：{current_date}"
     
     def get_final_answer_context(self, **format_args) -> str:
         """獲取最終答案上下文提示詞"""

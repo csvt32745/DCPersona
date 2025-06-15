@@ -9,8 +9,15 @@ DCPersona/
 │
 ├── main.py                  # Discord Bot 主程式入口，初始化與啟動
 ├── cli_main.py              # CLI 測試介面，支援對話模式和配置調整
-├── config.yaml              # 系統設定檔（型別安全配置）
+├── config-example.yaml              # 系統設定檔（型別安全配置）
 ├── personas/                # Agent 人格系統提示詞資料夾
+│
+├── tools/                   # **[新增]** LangChain 工具定義
+│   ├── google_search.py     # Google 搜尋工具
+│   └── set_reminder.py      # 設定提醒工具
+│
+├── event_scheduler/         # **[新增]** 通用事件排程系統
+│   └── scheduler.py         # 基於 APScheduler 的排程器核心
 │
 ├── discord_bot/             # **[核心]** Discord 整合層
 │   ├── client.py            # Discord Client 初始化與設定
@@ -52,7 +59,7 @@ DCPersona/
 ### 1. 統一 Agent 架構
 本專案採用基於 LangGraph 的統一 Agent 架構，實現了：
 
-- **配置驅動的代理行為**: 透過 `config.yaml` 動態調整 Agent 能力
+- **配置驅動的代理行為**: 透過 `config-example.yaml` 動態調整 Agent 能力
 - **智能工具決策**: Agent 根據問題複雜度自主決定使用哪些工具
 - **多輪對話支援**: 支援複雜的多步驟研究與推理流程
 - **智能串流系統**: 整合即時串流回應，支援基於時間和內容長度的智能更新策略
@@ -93,6 +100,8 @@ flowchart TD
     G --> H[即時進度更新]
     H --> I[最終回應]
     I --> J[Discord 回覆]
+    J --> K[提醒排程]
+    K --> L[提醒觸發]
 ```
 
 **詳細步驟說明**:
@@ -104,6 +113,12 @@ flowchart TD
 6. **智能串流處理**: 在 `finalize_answer` 階段根據配置啟用串流回應，基於時間和內容長度智能更新
 7. **統一進度管理**: 透過 `DiscordProgressAdapter` 和 `ProgressManager` 統一處理所有 Discord 訊息操作
 8. **結果回覆**: 將最終答案格式化後回覆到 Discord，支援串流和非串流兩種模式
+9. **提醒排程**:
+    - 若 Agent 執行 `set_reminder` 工具成功，`message_handler.py` 會從 Agent 狀態中提取 `ReminderDetails`。
+    - 將 `ReminderDetails` 傳遞給 `EventScheduler` 進行排程。
+10. **提醒觸發**:
+    - `EventScheduler` 觸發事件時，會呼叫 `message_handler.py` 中註冊的回調。
+    - 回調函數會建構一個模擬的 `MsgNode`，並重新送回 Agent 處理，以生成提醒訊息。
 
 ### CLI 工作流程
 
@@ -142,13 +157,14 @@ flowchart TD
 
 **主要組件**:
 - `UnifiedAgent`: 統一代理類，整合所有功能
-- `generate_query_or_plan`: 智能計劃生成節點
-- `execute_single_tool`: 並行工具執行節點
+- `generate_query_or_plan`: 智能計劃生成節點，LLM 在此決定是否呼叫工具。
+- `execute_tools_node`: 負責解析 LLM 的 `tool_calls` 並執行對應的 LangChain 工具。
 - `reflection`: 結果評估與反思節點
 - `finalize_answer`: 最終答案生成節點
 
 **關鍵特性**:
-- **動態工具決策**: 根據問題複雜度自動選擇工具
+- **動態工具決策**: LangChain 模型根據對話上下文和工具描述，自動決定何時以及如何使用工具。
+- **LangChain 工具整合**: 透過 `llm.bind_tools()` 將 `tools/` 目錄下的工具綁定到模型，實現自動化的提示詞注入和參數解析。
 - **並行執行**: 支援同時執行多個搜尋查詢
 - **智能反思**: 評估結果充分性，決定是否需要更多資訊
 - **進度整合**: 內建進度通知機制
@@ -172,6 +188,7 @@ flowchart TD
 - 訊息歷史收集協調
 - Agent 實例管理
 - 進度適配器註冊
+- **事件排程與觸發**: 負責將 Agent 產生的提醒請求排程到 `EventScheduler`，並處理排程器觸發後的回調邏輯。
 
 #### `message_collector.py` - 多模態訊息收集
 處理複雜的訊息收集邏輯：
@@ -182,6 +199,13 @@ flowchart TD
 - **訊息去重複與排序**: 根據訊息 ID 進行去重複，並依時間戳進行排序，確保上下文的準確性和時間順序
 - **內容過濾**: 根據配置限制訊息長度和數量
 - **結構化輸出**: 轉換為標準 `MsgNode` 格式
+
+**重要型別**:
+- `OverallState`: LangGraph 全域狀態
+- `MsgNode`: 標準化訊息節點（支援多模態）
+- `AgentPlan`: Agent 執行計劃
+- `ReminderDetails`: 儲存提醒事件的詳細資訊（內容、時間、頻道 ID 等）。
+- `ToolExecutionResult`: 標準化工具執行結果的資料結構，包含成功狀態和訊息。
 
 #### `progress_adapter.py` - Discord 進度整合
 實現 Discord 特定的進度顯示：
@@ -257,16 +281,35 @@ progress:
 
 ---
 
-## 工具系統架構
+## 工具系統 (Tool System)
 
-### 工具系統架構
-工具功能已整合到 `agent_core/graph.py` 中，包括：
+本專案採用基於 LangChain 的標準化工具架構，確保了高度的可擴展性和模組化。所有工具都在 `tools/` 目錄下定義，並使用 `@tool` 裝飾器進行封裝。
 
-- **Google Search**: 整合 Google Generative AI 搜尋功能
-- **內建工具邏輯**: 直接嵌入到 LangGraph 節點中
+### 架構特色
+- **LangChain `@tool` 裝飾器**: 自動處理工具描述生成和參數 Schema 解析，簡化工具定義。
+- **動態綁定**: 在 `UnifiedAgent` 中，透過 `llm.bind_tools()` 將工具動態綁定到語言模型，讓模型能夠自主決策。
+- **標準化輸出**: 工具回傳 `ToolExecutionResult`，提供結構化的成功/失敗資訊，便於 Agent 進行後續處理。
+- **中心化管理**: 所有工具集中在 `tools/` 目錄，職責清晰，易於維護和擴展。
 
-### 工具擴展機制
-未來可透過擴展 Agent 節點來添加新工具功能。
+### 現有工具介紹
+
+#### 1. Google Search (`google_search`)
+- **功能**: 提供即時的網路搜尋能力。當 Agent 需要獲取最新資訊、查證事實或研究特定主題時，會自動呼叫此工具。
+- **使用方式**: Agent 自動觸發。當使用者提出需要外部知識的問題時 (例如 "今天天氣如何？" 或 "LangGraph 是什麼？")，Agent 會生成執行 `google_search` 的計畫。
+- **檔案位置**: `tools/google_search.py`
+
+#### 2. 設定提醒 (`set_reminder`)
+- **功能**: 讓使用者可以設定一個未來的提醒。此工具能解析自然語言中的時間表達，並將提醒事件交由 `EventScheduler` 系統管理。
+- **使用方式**: 使用者透過自然語言提出請求。
+  - **範例**:
+    - `"提醒我五分鐘後去開會"`
+    - `"明天早上 9 點提醒我要交報告"`
+    - `"下週一下午三點記得打電話"`
+- **互動流程**:
+  1. Agent 解析使用者意圖，呼叫 `set_reminder` 工具並傳入提醒內容與時間。
+  2. 工具成功後，Agent 會回覆確認訊息，例如："好的，已為您設定提醒。"`
+  3. 時間到達時，Bot 會在原始頻道發送提醒訊息。
+- **檔案位置**: `tools/set_reminder.py`
 
 ---
 
