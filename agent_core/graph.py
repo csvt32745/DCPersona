@@ -630,12 +630,6 @@ class UnifiedAgent(ProgressMixin):
             self.logger.info("finalize_answer: 生成最終答案")
             
             # 通知答案生成階段
-            await self._notify_progress(
-                stage="finalize_answer",
-                message="✍️ 正在整理答案...",
-                progress_percentage=90
-            )
-            
             # 檢查是否有成功的提醒請求
             if state.reminder_requests:
                 self.logger.info("finalize_answer: 確認提醒完成")
@@ -646,6 +640,12 @@ class UnifiedAgent(ProgressMixin):
                     message="✅ 提醒設定完成！",
                     progress_percentage=90
                 )
+            
+            await self._notify_progress(
+                stage="finalize_answer",
+                message="✍️ 正在整理答案...",
+                progress_percentage=90
+            )
             
             messages = state.messages
             tool_results = state.aggregated_tool_results or state.tool_results or []
@@ -707,6 +707,9 @@ class UnifiedAgent(ProgressMixin):
                     progress_percentage=100
                 )
             
+            if state.reminder_requests:
+                final_answer = final_answer + "\n" + "✅ 提醒設定完成！"
+                
             if final_answer == "":
                 final_answer = "✅ 回答完成！ (Agent 無言了)"
                 
