@@ -8,6 +8,7 @@
 import asyncio
 import logging
 import json
+import copy
 from typing import Dict, Any, List, Optional, Literal, Union
 from datetime import datetime
 
@@ -209,6 +210,7 @@ class UnifiedAgent(ProgressMixin):
                 # system_prompt = ""
                 system_prompt = self._build_planning_system_prompt(state.messages_global_metadata)
                 messages_for_llm = self._build_messages_for_llm(state.messages, system_prompt)
+                self._log_messages(messages_for_llm, "messages_for_llm (planning)")
                 ai_message = await self.tool_analysis_llm.ainvoke(messages_for_llm)
                 
                 # 檢查是否有工具調用
@@ -658,7 +660,8 @@ class UnifiedAgent(ProgressMixin):
             # 構建系統提示詞和訊息列表
             system_prompt = self._build_final_system_prompt(context, state.messages_global_metadata)
             messages_for_llm = self._build_messages_for_llm(messages, system_prompt)
-            logging.debug(f"messages_for_llm: {messages_for_llm[1:]}")
+            
+            self._log_messages(messages_for_llm, "messages_for_llm (finalize_answer)")
             
             # 檢查串流配置
 
@@ -767,6 +770,34 @@ class UnifiedAgent(ProgressMixin):
                         "snippet": result
                     })
         return sources
+
+    def _log_messages(self, messages_for_llm: List[Any], context_message: str = "messages_for_llm"):
+        """Helper function to log messages, truncating image data."""
+        if not messages_for_llm or len(messages_for_llm) < 2:
+            logging.debug(f"{context_message} (raw): {messages_for_llm}")
+            return
+        try:
+            # The first message is always SystemMessage, which we don't usually need to log repeatedly.
+            loggable_messages = copy.deepcopy(messages_for_llm)
+            for msg in loggable_messages:
+                # HumanMessage content can be a list of parts
+                if isinstance(msg.content, list):
+                    for part in msg.content:
+                        if isinstance(part, dict) and part.get("type") == "image_url":
+                            image_url_content = part.get("image_url")
+                            if isinstance(image_url_content, dict):
+                                url = image_url_content.get("url", "")
+                                if isinstance(url, str) and url.startswith("data:image"):
+                                    image_url_content["url"] = f"{url[:50]}...[TRUNCATED]"
+                            elif isinstance(image_url_content, str) and image_url_content.startswith("data:image"):
+                                part["image_url"] = f"{image_url_content[:50]}...[TRUNCATED]"
+
+            # Log all messages starting from the second one (skip system prompt)
+            logging.debug(f"{context_message}: {loggable_messages[1:]}")
+        except Exception as e:
+            logging.warning(f"Could not format messages for logging: {e}")
+            # Log raw messages if formatting fails, also skipping system prompt
+            logging.debug(f"{context_message} (raw): {messages_for_llm[1:]}")
 
 
 def create_unified_agent(config: Optional[AppConfig] = None) -> UnifiedAgent:

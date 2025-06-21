@@ -64,6 +64,9 @@
 
 ### 🌐 多模態支援
 - **圖片理解**: 支援 Discord 圖片輸入和 Vision 模型，並將圖片內容轉換為 Base64 編碼以供 LLM 處理
+- **Emoji / Sticker / 動畫**: 內建 `image_processor` 模組，完整支援自定義 Emoji、Discord Sticker（PNG/APNG/GIF/WebP）與 GIF/APNG/WebP 動畫（含幀取樣）。
+- **Embed Media 支援**: 自動偵測 `embed._thumbnail` / `embed.image` 的外部圖片 URL，封裝為 VirtualAttachment 與附件流程統一。
+- **媒體統計與摘要**: `message_collector` 會統計 emoji/sticker/靜態/動畫圖片數量並於訊息末尾附加 `[包含: ...]` 標記，`MULTIMODAL_GUIDANCE` 提示詞協助 LLM 解讀。
 - **文件處理**: 自動處理文字附件
 - **結構化內容**: 標準化的多模態內容處理，包含訊息 ID 去重複和時間戳排序
 
@@ -199,7 +202,10 @@ DCPersona/
 ├── utils/                   # 通用工具
 │   ├── config_loader.py     # 型別安全配置載入
 │   ├── logger.py            # 日誌系統
-│   └── common_utils.py      # 通用輔助函式
+│   ├── common_utils.py      # 通用輔助函式
+│   ├── image_processor.py   # 圖片 / Emoji / Sticker / 動畫處理核心
+│   └── __init__.py
+│
 │
 └── tests/                   # 測試檔案
     └── ...                  # 單元與整合測試

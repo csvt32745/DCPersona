@@ -86,6 +86,18 @@ class DiscordPermissionsConfig:
 
 
 @dataclass
+class EmojiStickerConfig:
+    """Emoji 和 Sticker 處理配置"""
+    max_emoji_per_message: int = 3
+    max_sticker_per_message: int = 2
+    max_animated_frames: int = 4
+    emoji_sticker_max_size: int = 256
+    enable_emoji_processing: bool = True
+    enable_sticker_processing: bool = True
+    enable_animated_processing: bool = True
+
+
+@dataclass
 class DiscordLimitsConfig:
     """Discord 限制配置"""
     max_text: int = 100000
@@ -110,6 +122,7 @@ class DiscordConfig:
     limits: DiscordLimitsConfig = field(default_factory=DiscordLimitsConfig)
     permissions: DiscordPermissionsConfig = field(default_factory=DiscordPermissionsConfig)
     maintenance: DiscordMaintenanceConfig = field(default_factory=DiscordMaintenanceConfig)
+    emoji_sticker: EmojiStickerConfig = field(default_factory=EmojiStickerConfig)
 
 
 @dataclass

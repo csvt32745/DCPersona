@@ -99,7 +99,8 @@ class DiscordMessageHandler:
                 max_text=self.config.discord.limits.max_text,
                 max_images=self.config.discord.limits.max_images,
                 max_messages=self.config.discord.limits.max_messages,
-                httpx_client=self.httpx_client
+                httpx_client=self.httpx_client,
+                emoji_sticker_config=self.config.discord.emoji_sticker
             )
             
             # 使用統一 Agent 進行處理
@@ -326,7 +327,12 @@ class DiscordMessageHandler:
             if message.author.bot and not message.content.startswith("提醒："):
                 return False
             
-            if not message.content.strip():
+            # 檢查是否有可處理的內容（文字、sticker 或附件）
+            has_text = bool(message.content.strip())
+            has_stickers = bool(getattr(message, 'stickers', []))
+            has_attachments = bool(getattr(message, 'attachments', []))
+            
+            if not (has_text or has_stickers or has_attachments):
                 return False
             
             # 檢查是否為 DM 或 bot 被提及

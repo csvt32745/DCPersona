@@ -65,6 +65,7 @@ async def test_actual_message_processing_flow():
     mock_message.mentions = [mock_message.guild.me]  # 確保 bot 被提及
     mock_message.attachments = []
     mock_message.embeds = []
+    mock_message.stickers = []  # 添加 stickers 屬性
     mock_message.reply = AsyncMock()
     
     # 使用型別安全的配置
@@ -154,6 +155,7 @@ async def test_simple_message_collection():
     mock_message.channel.history = Mock(return_value=mock_async_iter())
     mock_message.attachments = []
     mock_message.embeds = []
+    mock_message.stickers = []  # 添加 stickers 屬性
     mock_message.reference = None
     
     mock_discord_user = Mock()
@@ -298,6 +300,8 @@ def test_message_handler_should_process():
     empty_message = Mock()
     empty_message.author.bot = False
     empty_message.content = "   "
+    empty_message.stickers = []  # 沒有 sticker
+    empty_message.attachments = []  # 沒有附件
     assert handler._should_process_message(empty_message) is False
     
     # 測試正常訊息應該被處理 - 添加必要的屬性
@@ -308,6 +312,8 @@ def test_message_handler_should_process():
     normal_message.channel.type = discord.ChannelType.private  # DM 訊息
     normal_message.guild = None  # DM 中沒有 guild
     normal_message.mentions = []
+    normal_message.stickers = []  # 沒有 sticker
+    normal_message.attachments = []  # 沒有附件
     assert handler._should_process_message(normal_message) is True
 
 

@@ -31,6 +31,7 @@ class TestMessageCollector:
         msg.created_at = datetime.now()
         msg.attachments = []
         msg.embeds = []
+        msg.stickers = []  # 添加 stickers 屬性
         msg.reference = None
         return msg
     

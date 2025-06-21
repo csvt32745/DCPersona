@@ -42,6 +42,16 @@ discord:
   maintenance:
     enabled: false         # 是否啟用維護模式
     message: "維護中..."  # 維護模式訊息
+  
+  # Emoji 和 Sticker 處理配置
+  emoji_sticker:
+    max_emoji_per_message: 3       # 每條訊息最大 emoji 處理數量
+    max_sticker_per_message: 2     # 每條訊息最大 sticker 處理數量
+    max_animated_frames: 4         # 動畫最大幀數
+    emoji_sticker_max_size: 256    # emoji/sticker 最大尺寸 (像素)
+    enable_emoji_processing: true  # 是否啟用 emoji 處理
+    enable_sticker_processing: true # 是否啟用 sticker 處理
+    enable_animated_processing: true # 是否啟用動畫處理
 
 # LLM 配置
 llm:

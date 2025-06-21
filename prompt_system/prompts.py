@@ -19,6 +19,14 @@ from schemas.config_types import AppConfig, DiscordContextData
 # 常數
 ROOT_PROMPT_DIR = "persona"
 DEFAULT_TIMEZONE = "Asia/Taipei"
+MULTIMODAL_GUIDANCE = """
+多媒體內容處理指導：
+- 用戶訊息可能包含 Discord 自定義 emoji（格式：<:emoji_name:emoji_id>）、sticker 和圖片附件。
+- 所有圖片內容都已轉換為 base64 格式供你分析和理解。
+- 如果訊息末尾有 [包含: ...] 標記，這是多媒體內容的統計摘要。
+- 請在回應時適當參考和回應這些視覺內容，讓對話更生動自然。
+- 回應時可以用文字描述看到的圖片內容，或對 emoji/sticker 表達的情感作出回應。
+"""
 
 
 class PromptSystem:
@@ -143,19 +151,24 @@ class PromptSystem:
             if persona_cfg.fallback:
                 prompt_parts.append(persona_cfg.fallback.strip())
 
-        # 2. 工具描述 - 已移除，由 LangChain 自動處理
+
+        # 3. 工具描述 - 已移除，由 LangChain 自動處理
         # LangChain 的 bind_tools 會自動將工具描述注入到模型中
         
-        # 3. 時間戳資訊
+        # 4. 時間戳資訊
         timestamp_info = self._build_timestamp_info(config)
         if timestamp_info:
             prompt_parts.append(timestamp_info)
 
-        # 4. 全域 metadata（倒數第二位）
+        # 5. 全域 metadata（倒數第二位）
         if messages_global_metadata:
             prompt_parts.append(messages_global_metadata)
 
-        # 5. 最後加入任何其他系統指令（如 tool result 相關）
+        
+        # 6. 多媒體內容處理指導
+        prompt_parts.append(MULTIMODAL_GUIDANCE)
+        
+        # 7. 最後加入任何其他系統指令（如 tool result 相關）
         # （這裡是倒數第一位，為未來的 tool result 指令預留）
         
         result = "\n\n".join(prompt_parts)

@@ -46,6 +46,7 @@ DCPersona/
 │   ├── config_loader.py     # 型別安全配置載入器
 │   ├── logger.py            # 日誌系統設定
 │   ├── common_utils.py      # 通用輔助函式
+│   ├── image_processor.py   # 圖片 / Emoji / Sticker / 動畫處理核心
 │   └── __init__.py
 │
 └── tests/                   # 測試檔案
@@ -81,7 +82,7 @@ DCPersona/
     *   管理核心提示詞功能和工具相關提示詞模板。
 
 7.  **`utils/` - 通用工具與配置**:
-    *   包含型別安全配置載入器、日誌系統設定和通用輔助函式。
+    *   包含型別安全配置載入器、日誌系統設定、通用輔助函式，並以 `image_processor.py` 提供 Emoji、Sticker、GIF/APNG/WebP 動畫與 Embed 圖片的載入、取樣、尺寸調整與 Base64 轉換功能。
 
 ---
 
@@ -119,4 +120,14 @@ DCPersona/
 2.  **Base64 編碼**: 將圖片轉換為 Base64 編碼，以供 LLM 可處理的格式。
 3.  **結構化儲存**: 使用 `MsgNode.content` 的 `List[Dict]` 格式儲存圖片內容。
 4.  **訊息去重複與排序**: 在轉換為 `MsgNode` 之前，根據訊息 ID 進行去重複，並根據時間戳進行排序。
-5.  **LLM 傳遞**: 直接將結構化內容傳遞給支援多模態的 LLM 模型。 
+5.  **LLM 傳遞**: 直接將結構化內容傳遞給支援多模態的 LLM 模型。
+
+### Emoji / Sticker / Embed 多媒體擴充
+
+6.  **Emoji / Sticker 處理**: 透過 `image_processor.parse_emoji_from_message()` 與 `load_from_discord_emoji_sticker()` 解析訊息文字與 Sticker 物件，並統一轉為圖片後處理。
+
+7.  **動畫幀取樣**: 若檢測為動畫（`is_animated`），使用 `sample_animated_frames()` 均勻取樣幀數 (預設 4)。
+
+8.  **Embed 圖片與 VirtualAttachment**: `message_collector` 從 `embed._thumbnail` / `embed.image` 提取 URL，封裝為 `VirtualAttachment`，與實際附件統一流程處理。
+
+9.  **媒體統計與摘要標記**: `message_collector` 彙總 emoji/sticker/靜態圖片/動畫數量，於訊息末尾附加 `[包含: 1個emoji, 2個動畫]`，並在 `prompt_system.prompts` 透過 `MULTIMODAL_GUIDANCE` 指導 LLM。

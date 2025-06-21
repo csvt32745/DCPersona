@@ -10,7 +10,8 @@ from unittest.mock import patch, MagicMock
 
 from prompt_system.prompts import (
     PromptSystem, 
-    get_prompt_system
+    get_prompt_system,
+    MULTIMODAL_GUIDANCE
 )
 from utils.config_loader import load_typed_config
 
@@ -213,6 +214,15 @@ class TestPromptSystemLangChainAdaptation:
         assert isinstance(result, str)
         assert len(result) > 0
 
+    def test_system_instructions_include_multimodal_guidance(self):
+        """測試系統指令是否包含多媒體處理指導"""
+        result = self.prompt_system.get_system_instructions(
+            config=self.config,
+            messages_global_metadata="測試 metadata"
+        )
+        
+        assert MULTIMODAL_GUIDANCE in result
+
 
 if __name__ == "__main__":
     # 運行基本測試
@@ -222,5 +232,6 @@ if __name__ == "__main__":
     test_instance.test_get_system_instructions_without_tools()
     test_instance.test_get_system_instructions_with_deprecated_tools_param()
     test_instance.test_backward_compatibility()
+    test_instance.test_system_instructions_include_multimodal_guidance()
     
     print("PromptSystem LangChain 適配測試通過！") 

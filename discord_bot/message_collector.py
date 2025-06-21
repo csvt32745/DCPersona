@@ -9,12 +9,25 @@ import discord
 import logging
 import asyncio
 from base64 import b64encode
-from typing import Dict, Any, Set, List, Optional, Union, Iterator
+from typing import Dict, Any, Set, List, Optional, Union, Iterator, Tuple
 from dataclasses import dataclass, field
 from datetime import datetime
 
 from schemas.agent_types import MsgNode
+from schemas.config_types import EmojiStickerConfig
 from discord_bot.message_manager import get_manager_instance
+from utils.image_processor import (
+    parse_emoji_from_message,
+    load_from_discord_emoji_sticker,
+    process_attachment_image,
+    resize_image,
+    convert_images_to_base64_dict,
+    ImageProcessingError,
+    VirtualAttachment,
+    is_video_url,
+    # 保留舊的導入以維持相容性，但會產生 deprecation warning
+    is_discord_gif_url,
+)
 
 
 @dataclass
@@ -165,7 +178,8 @@ async def collect_message(
     max_text: int = 4000,
     max_images: int = 4,
     max_messages: int = 10,
-    httpx_client = None
+    httpx_client = None,
+    emoji_sticker_config: Optional[EmojiStickerConfig] = None
 ) -> CollectedMessages:
     """
     收集並處理訊息內容，建立對話歷史鏈
@@ -173,10 +187,12 @@ async def collect_message(
     Args:
         new_msg: Discord 訊息
         discord_client_user: Bot 的 Discord 用戶物件
+        enable_conversation_history: 是否啟用對話歷史
         max_text: 每條訊息的最大文字長度
         max_images: 每條訊息的最大圖片數量
         max_messages: 歷史訊息的最大數量
         httpx_client: HTTP 客戶端（用於下載附件）
+        emoji_sticker_config: Emoji 和 Sticker 處理配置
     
     Returns:
         CollectedMessages: 包含處理後訊息和用戶警告的結構化資料
@@ -185,11 +201,15 @@ async def collect_message(
     user_warnings = set()
     curr_msg = new_msg
     
+    # 設定預設 emoji_sticker_config
+    if emoji_sticker_config is None:
+        emoji_sticker_config = EmojiStickerConfig()
+    
     # 取得 Discord 訊息管理器
     message_manager = get_manager_instance()
     
     # 記錄收到的訊息
-    logging.info(f"處理訊息 (用戶: {new_msg.author.display_name}, 附件: {len(new_msg.attachments)})")
+    logging.info(f"處理訊息 (用戶: {new_msg.author.display_name}, 附件: {len(new_msg.attachments)}, stickers: {len(new_msg.stickers)})")
     
     # 獲取訊息歷史
     history_msgs = []
@@ -218,7 +238,8 @@ async def collect_message(
                 discord_client_user, 
                 max_text, 
                 remaining_imgs_count, # 這裡的 remaining_imgs_count 在這個迴圈中不再是累計的，因為我們是獨立處理每個訊息的圖片限制
-                httpx_client
+                httpx_client,
+                emoji_sticker_config
             )
             
             if processed_msg and processed_msg.message_id not in all_processed_messages_map:
@@ -245,7 +266,8 @@ async def collect_message(
                     discord_client_user, 
                     max_text, 
                     max_images, # 歷史訊息的圖片限制獨立計算
-                    httpx_client
+                    httpx_client,
+                    emoji_sticker_config
                 )
                 if processed_msg:
                     all_processed_messages_map[processed_msg.message_id] = processed_msg
@@ -300,15 +322,63 @@ async def collect_message(
     )
 
 
+def _extract_media_urls_from_embeds(msg: discord.Message) -> List[str]:
+    """從 embed 中提取媒體 URLs（支援 thumbnail 和 image，簡化處理邏輯）
+    
+    Args:
+        msg: Discord 訊息物件
+        
+    Returns:
+        List[str]: 提取到的 URLs 列表（跳過明顯的影片格式）
+    """
+    media_urls = []
+    
+    for embed in msg.embeds:
+        # 處理 embed thumbnail
+        if hasattr(embed, '_thumbnail') and embed._thumbnail:
+            thumbnail_url = embed._thumbnail.get('url', '')
+            if thumbnail_url:
+                if is_video_url(thumbnail_url):
+                    # TODO: 未來可考慮支援影片處理
+                    logging.info(f"跳過 embed thumbnail 中的影片 URL（待未來實現）: {thumbnail_url}")
+                else:
+                    # 簡化邏輯：只要不是明顯的影片格式就嘗試處理
+                    media_urls.append(thumbnail_url)
+                    logging.debug(f"從 embed thumbnail 提取 URL: {thumbnail_url}")
+        
+        # 處理 embed image (EmbedProxy)
+        if hasattr(embed, 'image') and embed.image:
+            image_url = getattr(embed.image, 'url', '') or getattr(embed.image, 'proxy_url', '')
+            if image_url:
+                if is_video_url(image_url):
+                    # TODO: 未來可考慮支援影片處理
+                    logging.info(f"跳過 embed image 中的影片 URL（待未來實現）: {image_url}")
+                else:
+                    # 簡化邏輯：只要不是明顯的影片格式就嘗試處理
+                    media_urls.append(image_url)
+                    logging.debug(f"從 embed image 提取 URL: {image_url}")
+    
+    return media_urls
+
+
 async def _process_single_message(
     msg: discord.Message,
     discord_client_user: discord.User,
     max_text: int,
     remaining_imgs_count: int,
-    httpx_client
+    httpx_client,
+    emoji_sticker_config: EmojiStickerConfig
 ) -> Optional[ProcessedMessage]:
     """處理單一訊息"""
     try:
+        # 初始化多媒體內容計數器
+        media_stats = {
+            "emoji": 0,
+            "sticker": 0,
+            "animated": 0,
+            "static": 0
+        }
+
         # 清理內容（移除 bot 提及）
         cleaned_content = msg.content
         if msg.content.startswith(discord_client_user.mention):
@@ -316,22 +386,39 @@ async def _process_single_message(
         if msg.author.id != discord_client_user.id:
             cleaned_content = f"{msg.author.mention} {msg.author.display_name}: {cleaned_content}"
         
+        # 處理 Discord Stickers
+        sticker_images, sticker_stats = await _process_discord_stickers(msg, emoji_sticker_config)
+        media_stats["sticker"] = sticker_stats["total"]
+        media_stats["animated"] += sticker_stats["animated"]
+        media_stats["static"] += sticker_stats["static"]
+        
+        # 處理訊息中的 Emoji
+        emoji_images, emoji_stats = await _process_emoji_from_message(msg, emoji_sticker_config)
+        media_stats["emoji"] = emoji_stats["total"]
+        media_stats["animated"] += emoji_stats["animated"]
+        media_stats["static"] += emoji_stats["static"]
+        
         # 處理附件
         good_attachments = [
             att for att in msg.attachments 
             if att.content_type and any(att.content_type.startswith(x) for x in ("text", "image"))
         ]
         
-        attachment_responses = []
-        if httpx_client and good_attachments:
-            try:
-                logging.debug(f"下載附件: {[att.url for att in good_attachments]}")
-                attachment_responses = await asyncio.gather(
-                    *[httpx_client.get(att.url) for att in good_attachments],
-                    return_exceptions=True
-                )
-            except Exception as e:
-                logging.warning(f"下載附件失敗: {e}")
+        # 從 embed 中提取媒體 URLs 並創建虛擬附件（支援 thumbnail 和 image，無域名限制）
+        embed_media_urls = _extract_media_urls_from_embeds(msg)
+        virtual_attachments = []
+        
+        for url in embed_media_urls:
+            if len(good_attachments) + len(virtual_attachments) < remaining_imgs_count:
+                virtual_att = VirtualAttachment(url=url)
+                virtual_attachments.append(virtual_att)
+                logging.debug(f"從 embed 創建虛擬附件: {url}")
+            else:
+                logging.warning(f"達到圖片數量限制，跳過 embed 媒體 URL: {url}")
+                break
+        
+        # 合併真實附件和虛擬附件
+        good_attachments.extend(virtual_attachments)
         
         # 組合文字內容
         text_parts = []
@@ -349,45 +436,84 @@ async def _process_single_message(
                 text_parts.append(embed_text)
         
         # 添加文字附件內容
-        for att, resp in zip(good_attachments, attachment_responses):
-            if (att.content_type.startswith("text") and 
-                hasattr(resp, 'text') and not isinstance(resp, Exception)):
-                try:
-                    text_parts.append(resp.text)
-                except Exception:
-                    logging.warning(f"無法讀取文字附件: {att.filename}")
+        if httpx_client and good_attachments:
+            try:
+                logging.debug(f"下載文字附件: {[att.url for att in good_attachments if att.content_type.startswith('text')]}")
+                text_attachment_responses = await asyncio.gather(
+                    *[httpx_client.get(att.url) for att in good_attachments if att.content_type.startswith("text")],
+                    return_exceptions=True
+                )
+                
+                text_attachments = [att for att in good_attachments if att.content_type.startswith("text")]
+                for att, resp in zip(text_attachments, text_attachment_responses):
+                    if hasattr(resp, 'text') and not isinstance(resp, Exception):
+                        try:
+                            text_parts.append(resp.text)
+                        except Exception:
+                            logging.warning(f"無法讀取文字附件: {att.filename}")
+            except Exception as e:
+                logging.warning(f"下載文字附件失敗: {e}")
         
         text_content = "\n".join(text_parts)[:max_text]
         
-        # 處理圖片附件
-        images = []
-        for att, resp in zip(good_attachments, attachment_responses):
-            if att.content_type.startswith("image") and len(images) < remaining_imgs_count:
-                if isinstance(resp, Exception):
-                    logging.warning(f"下載圖片附件失敗 (異常): {att.filename} - {resp}")
-                    continue # Skip this image
-                
-                if not hasattr(resp, 'content') or not resp.content:
-                    logging.warning(f"圖片附件下載內容為空或無內容: {att.filename}")
-                    continue # Skip this image if content is missing or empty
-
+        # 處理圖片附件（包含虛擬附件，即 embed 中的圖片 URLs，支援多種來源和格式）
+        attachment_images = []
+        attachment_count = 0
+        for att in good_attachments:
+            # ⚠️ 注意：att 可能是 VirtualAttachment（來自 embed thumbnail/image）或真實的 discord.Attachment
+            # 在對 attachment 進行更深入的屬性操作時，請檢查 hasattr(att, '_is_virtual')
+            if att.content_type.startswith("image") and len(attachment_images) < remaining_imgs_count:
                 try:
-                    image_data = {
-                        "type": "image_url",
-                        "image_url": {
-                            "url": f"data:{att.content_type};base64,{b64encode(resp.content).decode('utf-8')}"
-                        }
-                    }
-                    images.append(image_data)
-                    logging.debug(f"成功處理圖片附件: {att.filename}")
+                    # 使用新的圖片處理函數支援動畫
+                    processed_frames, is_animated = await process_attachment_image(
+                        att, 
+                        emoji_sticker_config.max_animated_frames if emoji_sticker_config.enable_animated_processing else 1,
+                        httpx_client
+                    )
+                    
+                    # 更新統計
+                    if is_animated:
+                        media_stats["animated"] += 1
+                    else:
+                        media_stats["static"] += 1
+                    attachment_count += 1
+                    
+                    # 調整圖片大小（使用現有的限制邏輯，不使用 emoji_sticker_max_size）
+                    # 這裡保持現有的大小限制邏輯不變
+                    
+                    # 轉換為 Base64 格式
+                    frame_data = convert_images_to_base64_dict(processed_frames)
+                    attachment_images.extend(frame_data)
+                    
+                    logging.debug(f"成功處理圖片附件: {att.filename}, 幀數: {len(processed_frames)}")
+                    
+                except ImageProcessingError as e:
+                    logging.warning(f"處理圖片附件失敗: {att.filename} - {e}")
+                    continue
                 except Exception as e:
-                    logging.warning(f"無法編碼圖片附件為 Base64: {att.filename} - {e}")
+                    logging.warning(f"處理圖片附件時發生未預期錯誤: {att.filename} - {e}")
+                    continue
+        
+        # 產生多媒體內容摘要
+        media_summary = _generate_media_summary(
+            emoji_count=media_stats["emoji"],
+            sticker_count=media_stats["sticker"],
+            gif_count=media_stats["animated"],
+            static_count=media_stats["static"] + attachment_count - media_stats["animated"]
+        )
+
+        # 將摘要附加到文字內容
+        if media_summary:
+            text_content = f"{text_content}\n{media_summary}".strip()
+            
+        # 整合所有圖片內容
+        all_images = sticker_images + emoji_images + attachment_images
         
         # 決定內容格式
-        if images and text_content:
-            content = [{"type": "text", "text": text_content}] + images
-        elif images:
-            content = images
+        if all_images and text_content:
+            content = [{"type": "text", "text": text_content}] + all_images
+        elif all_images:
+            content = all_images
         else:
             content = text_content
         
@@ -458,4 +584,181 @@ def _check_limits_and_add_warnings(
         if not att.content_type or not any(att.content_type.startswith(x) for x in ("text", "image"))
     ]
     if unsupported_attachments:
-        user_warnings.add("⚠️ 不支援的附件類型") 
+        user_warnings.add("⚠️ 不支援的附件類型")
+
+
+async def _process_discord_stickers(
+    msg: discord.Message,
+    config: EmojiStickerConfig
+) -> Tuple[List[Dict[str, Any]], Dict[str, int]]:
+    """
+    處理 Discord Sticker
+    
+    Args:
+        msg: Discord 訊息物件
+        config: Emoji 和 Sticker 配置
+        
+    Returns:
+        Tuple[List[Dict[str, Any]], Dict[str, int]]: 
+            處理後的 sticker 圖片列表和統計數據
+            (e.g., {"total": 1, "animated": 1, "static": 0})
+    """
+    if not config.enable_sticker_processing or not msg.stickers:
+        return [], {"total": 0, "animated": 0, "static": 0}
+    
+    sticker_images = []
+    stats = {"total": 0, "animated": 0, "static": 0}
+    
+    for sticker in msg.stickers:
+        if stats["total"] >= config.max_sticker_per_message:
+            logging.warning(f"Sticker 數量超過限制 {config.max_sticker_per_message}，跳過剩餘 sticker")
+            break
+        
+        try:
+            # 檢查 sticker 格式
+            if hasattr(sticker, 'format') and sticker.format:
+                format_name = str(sticker.format).lower()
+                
+                # TODO: Lottie 格式暫不支援，直接跳過
+                if 'lottie' in format_name:
+                    logging.info(f"跳過 Lottie 格式的 sticker: {sticker.name}")
+                    continue
+                
+                # 支援的格式：PNG, APNG, GIF, WebP
+                supported_formats = ['png', 'apng', 'gif', 'webp']
+                if not any(fmt in format_name for fmt in supported_formats):
+                    logging.warning(f"不支援的 sticker 格式: {format_name}")
+                    continue
+            
+            # 載入 sticker 圖片
+            frames, is_animated = await load_from_discord_emoji_sticker(
+                sticker, 
+                config.max_animated_frames if config.enable_animated_processing else 1
+            )
+            
+            # 更新統計
+            stats["total"] += 1
+            if is_animated:
+                stats["animated"] += 1
+            else:
+                stats["static"] += 1
+
+            # 調整圖片大小
+            resized_frames = []
+            for frame in frames:
+                resized_frame = resize_image(frame, config.emoji_sticker_max_size)
+                resized_frames.append(resized_frame)
+            
+            # 轉換為 Base64 格式
+            frame_data = convert_images_to_base64_dict(resized_frames)
+            sticker_images.extend(frame_data)
+            
+            logging.debug(f"成功處理 sticker: {sticker.name}, 幀數: {len(frames)}")
+            
+        except ImageProcessingError as e:
+            logging.warning(f"處理 sticker 失敗: {sticker.name} - {e}")
+            continue
+        except Exception as e:
+            logging.warning(f"處理 sticker 時發生未預期錯誤: {sticker.name} - {e}")
+            continue
+    
+    return sticker_images, stats
+
+
+async def _process_emoji_from_message(
+    msg: discord.Message,
+    config: EmojiStickerConfig
+) -> Tuple[List[Dict[str, Any]], Dict[str, int]]:
+    """
+    處理訊息中的自定義 Emoji
+    
+    Args:
+        msg: Discord 訊息物件
+        config: Emoji 和 Sticker 配置
+        
+    Returns:
+        Tuple[List[Dict[str, Any]], Dict[str, int]]: 
+            處理後的 emoji 圖片列表和統計數據
+            (e.g., {"total": 1, "animated": 0, "static": 1})
+    """
+    if not config.enable_emoji_processing or not msg.content:
+        return [], {"total": 0, "animated": 0, "static": 0}
+    
+    emoji_images = []
+    stats = {"total": 0, "animated": 0, "static": 0}
+    
+    try:
+        # 解析訊息中的 emoji
+        emojis = await parse_emoji_from_message(msg, config.max_emoji_per_message)
+        
+        if not emojis:
+            return [], {"total": 0, "animated": 0, "static": 0}
+        
+        if len(emojis) > config.max_emoji_per_message:
+            logging.warning(f"Emoji 數量超過限制 {config.max_emoji_per_message}，僅處理前 {config.max_emoji_per_message} 個")
+            emojis = emojis[:config.max_emoji_per_message]
+        
+        for emoji in emojis:
+            try:
+                # 載入 emoji 圖片
+                frames, is_animated = await load_from_discord_emoji_sticker(
+                    emoji,
+                    config.max_animated_frames if config.enable_animated_processing else 1
+                )
+                
+                # 更新統計
+                stats["total"] += 1
+                if is_animated:
+                    stats["animated"] += 1
+                else:
+                    stats["static"] += 1
+
+                # 調整圖片大小
+                resized_frames = []
+                for frame in frames:
+                    resized_frame = resize_image(frame, config.emoji_sticker_max_size)
+                    resized_frames.append(resized_frame)
+                
+                # 轉換為 Base64 格式
+                frame_data = convert_images_to_base64_dict(resized_frames)
+                emoji_images.extend(frame_data)
+                
+                logging.debug(f"成功處理 emoji: {emoji.name if hasattr(emoji, 'name') else 'unknown'}, 幀數: {len(frames)}")
+                
+            except ImageProcessingError as e:
+                logging.warning(f"處理 emoji 失敗: {emoji.name if hasattr(emoji, 'name') else 'unknown'} - {e}")
+                continue
+            except Exception as e:
+                logging.warning(f"處理 emoji 時發生未預期錯誤: {emoji.name if hasattr(emoji, 'name') else 'unknown'} - {e}")
+                continue
+        
+    except Exception as e:
+        logging.error(f"解析訊息 emoji 時發生錯誤: {e}")
+    
+    return emoji_images, stats
+
+def _generate_media_summary(
+    emoji_count: int,
+    sticker_count: int,
+    gif_count: int,
+    static_count: int
+) -> str:
+    """生成簡潔的媒體內容摘要"""
+    parts = []
+    if emoji_count > 0:
+        parts.append(f"{emoji_count}個emoji")
+    if sticker_count > 0:
+        parts.append(f"{sticker_count}個sticker")
+    if gif_count > 0:
+        parts.append(f"{gif_count}個動畫")
+    
+    # 靜態圖片的統計比較複雜，暫時不加入摘要，避免混淆
+    # if static_count > 0:
+    #     parts.append(f"{static_count}張靜態圖片")
+
+    if parts:
+        return f"[包含: {', '.join(parts)}]"
+    return ""
+
+
+ 
