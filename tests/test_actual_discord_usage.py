@@ -212,16 +212,35 @@ def test_discord_client_creation():
     
     test_config = get_test_discord_config()
     
-    with patch('discord.Client') as mock_client_class:
-        mock_client = Mock()
-        mock_client_class.return_value = mock_client
+    # Mock 所有必要的組件
+    with patch('discord_bot.client.get_message_handler') as mock_get_handler, \
+         patch('discord_bot.client.get_wordle_service') as mock_get_wordle_service, \
+         patch('discord_bot.client.PromptSystem') as mock_prompt_system, \
+         patch('discord_bot.client.ChatGoogleGenerativeAI') as mock_llm, \
+         patch.dict('os.environ', {'GEMINI_API_KEY': 'test_key'}):
+        
+        # 設置 mock 返回值
+        mock_get_handler.return_value = Mock()
+        mock_get_wordle_service.return_value = Mock()
+        mock_prompt_system.return_value = Mock()
+        mock_llm.return_value = Mock()
         
         client = create_discord_client(test_config)
         
-        # 驗證客戶端建立
-        mock_client_class.assert_called_once()
-        call_kwargs = mock_client_class.call_args[1]
-        assert call_kwargs['intents'].message_content is True
+        # 驗證客戶端創建成功且是正確的類型
+        from discord_bot.client import DCPersonaBot
+        assert isinstance(client, DCPersonaBot)
+        
+        # 驗證必要的服務被初始化
+        mock_get_handler.assert_called_once()
+        mock_get_wordle_service.assert_called_once()
+        mock_prompt_system.assert_called_once()
+        
+        # 驗證 Bot 有正確的屬性
+        assert hasattr(client, 'config')
+        assert hasattr(client, 'wordle_service')
+        assert hasattr(client, 'prompt_system')
+        assert hasattr(client, 'message_handler')
 
 
 def test_simplified_config_usage():

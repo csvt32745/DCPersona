@@ -197,6 +197,8 @@ class PromptSystem:
                 context_parts.append(f"<@{discord_context.bot_id}> 是你的 ID，如果有人提到 <@{discord_context.bot_id}> 就是在說你")
             context_parts.append("User's names are their Discord IDs and should be typed as '<@ID>'.")
         
+        context_parts.append("注意：若對話中有 || 內容 || 的對話內容，請記得跟著一起用 || 內容 || 包起來，防止意外暴雷，例如: ||答案||")
+        
         # 頻道資訊
         if discord_context.channel_id:
             if discord_context.channel_name:

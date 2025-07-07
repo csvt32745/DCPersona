@@ -41,12 +41,14 @@ DCPersona/
 ├── prompt_system/           # 統一提示詞管理系統
 │   ├── prompts.py           # 核心提示詞功能與 PromptSystem
 │   └── tool_prompts/        # 工具相關提示詞模板
+│       └── wordle_hint_instructions.txt # Wordle 提示生成指令
 │
 ├── utils/                   # 通用工具與配置
 │   ├── config_loader.py     # 型別安全配置載入器
 │   ├── logger.py            # 日誌系統設定
 │   ├── common_utils.py      # 通用輔助函式
 │   ├── image_processor.py   # 圖片 / Emoji / Sticker / 動畫處理核心
+│   ├── wordle_service.py    # Wordle 遊戲提示服務
 │   └── __init__.py
 │
 └── tests/                   # 測試檔案
@@ -83,6 +85,7 @@ DCPersona/
 
 7.  **`utils/` - 通用工具與配置**:
     *   包含型別安全配置載入器、日誌系統設定、通用輔助函式，並以 `image_processor.py` 提供 Emoji、Sticker、GIF/APNG/WebP 動畫與 Embed 圖片的載入、取樣、尺寸調整與 Base64 轉換功能。
+    * `wordle_service.py`: 提供 Wordle 每日答案查詢和提示生成後的安全處理功能。
 
 ---
 
@@ -100,6 +103,19 @@ DCPersona/
 8.  **結果回覆**: 將最終答案格式化後回覆到 Discord，支援串流和非串流兩種模式。
 9.  **提醒排程**: 若 Agent 執行 `set_reminder` 工具成功，`message_handler.py` 會從 Agent 狀態中提取 `ReminderDetails`，並將其傳遞給 `event_scheduler/scheduler.py` 進行排程。
 10. **提醒觸發**: 當 `event_scheduler/scheduler.py` 觸發提醒事件時，會呼叫 `message_handler.py` 中註冊的回調函數，該函數會建構一個模擬訊息，重新送回 Agent 處理以生成提醒內容，並最終發送至 Discord。
+
+### Slash Command 工作流程 (`/wordle_hint`)
+1.  **指令觸發**: 使用者在 Discord 中執行 `/wordle_hint` 命令，可選擇性提供 `date` 參數。
+2.  **指令處理**: `discord_bot/client.py` 中的 `DCPersonaBot` 實例接收並處理該指令。
+3.  **日期解析**: 若使用者未提供日期，則使用系統預設時區的當前日期。
+4.  **獲取答案**: 呼叫 `utils/wordle_service.py` 中的 `WordleService` 從 NYT API 獲取指定日期的 Wordle 答案。
+    - 若 API 請求失敗（如 404 或超時），則向使用者回覆錯誤訊息。
+5.  **提示詞生成**:
+    - 使用 `prompt_system/prompts.py` 中的 `PromptSystem` 載入 `wordle_hint_instructions.txt` 提示詞模板。
+    - 將 Wordle 答案和 Persona 風格填入模板。
+6.  **LLM 呼叫**: 實例化一個獨立的 `ChatGoogleGenerativeAI` 模型，並傳入格式化後的提示詞以生成創意提示。
+7.  **安全後處理**: 使用 `utils/wordle_service.py` 中的 `safe_wordle_output` 函數，確保 LLM 的回覆包含 Discord Spoiler Tag (`||...||`)，並符合輸出格式。
+8.  **回覆使用者**: 將包含 Spoiler Tag 的最終提示回覆到 Discord 頻道。
 
 ### CLI 工作流程
 
@@ -130,4 +146,4 @@ DCPersona/
 
 8.  **Embed 圖片與 VirtualAttachment**: `message_collector` 從 `embed._thumbnail` / `embed.image` 提取 URL，封裝為 `VirtualAttachment`，與實際附件統一流程處理。
 
-9.  **媒體統計與摘要標記**: `message_collector` 彙總 emoji/sticker/靜態圖片/動畫數量，於訊息末尾附加 `[包含: 1個emoji, 2個動畫]`，並在 `prompt_system.prompts` 透過 `MULTIMODAL_GUIDANCE` 指導 LLM。
+9.  **媒體統計與摘要標記**: `message_collector` 彙總 emoji/sticker/靜慶圖片/動畫數量，於訊息末尾附加 `[包含: 1個emoji, 2個動畫]`，並在 `prompt_system.prompts` 透過 `MULTIMODAL_GUIDANCE` 指導 LLM。

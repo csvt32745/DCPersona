@@ -5,8 +5,8 @@ alwaysApply: true
 ---
 - **DCPersona** 是一個現代化的 Discord AI 助手，採用統一 Agent 架構和型別安全設計。基於 LangGraph 的智能工作流程，支援多模態輸入（文字、圖片）、智能工具決策和即時串流回應，為使用者提供流暢且智能的對話體驗。
 - 詳細說明請看 `README.md`
+- 若有不清楚的 library 使用，可以用 `context7` tool 來查詢
 - 關於 Project 簡易架構、流程，參考 `project_rules.md`，必要時讀取相關檔案
 - 任務開始前，請先向 user 確認 task list 和架構，確認後再進行
 - 請在任務結束後向 user 確認結果，之後再寫 test
-
 - test 請用 `python -m pytest` 來跑全部測試，包含 regression test，請務必把所有 test error 修復

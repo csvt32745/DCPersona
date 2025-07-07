@@ -5,6 +5,7 @@ openai
 pyyaml
 pytz
 python-dotenv
+pillow
 
 # LangGraph core dependencies
 langgraph>=0.2.0
@@ -22,6 +23,7 @@ typing-extensions>=4.0.0
 # Async support
 asyncio
 aiofiles
+aiohttp
 
 # Scheduling
 apscheduler>=3.10.0

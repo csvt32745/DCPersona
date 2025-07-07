@@ -33,6 +33,8 @@
   - [支援工具](#支援工具)
     - [🌐 Google Search](#-google-search)
     - [⏰ 設定提醒 (`set_reminder`)](#-設定提醒-set_reminder)
+- [Slash Commands](#slash-commands)
+  - [🧩 Wordle 每日提示 (`/wordle_hint`)](#-wordle-每日提示-wordle_hint)
 - [配置系統](#配置系統)
   - [配置特色](#配置特色)
 - [測試](#測試)
@@ -204,6 +206,7 @@ DCPersona/
 │   ├── logger.py            # 日誌系統
 │   ├── common_utils.py      # 通用輔助函式
 │   ├── image_processor.py   # 圖片 / Emoji / Sticker / 動畫處理核心
+│   ├── wordle_service.py    # Wordle 遊戲提示服務
 │   └── __init__.py
 │
 │
@@ -231,6 +234,22 @@ DCPersona 透過 LangChain 的工具系統，賦予 Agent 與外部世界互動�
   - `"提醒我 10 分鐘後喝水"`
   - `"明天早上九點提醒我開會"`
 - **運作方式**: Agent 解析時間和提醒內容後，將其交由內建的事件排程系統處理，並在指定時間到達時發送通知。
+
+---
+
+## Slash Commands
+
+除了透過對話與 Agent 互動，DCPersona 也提供方便的 Slash Commands 來執行特定功能。
+
+### 🧩 Wordle 每日提示 (`/wordle_hint`)
+- **功能**: 獲取當日或指定日期的 Wordle 遊戲提示，並由 LLM 生成富有趣味的創意線索。
+- **特色**:
+  - **即時互動**: 無需等待 Agent 回應，指令立即觸發。
+  - **創意提示**: 由 LLM 生成間接、有趣的提示，而非直接洩漏答案。
+  - **防雷設計**: 答案以 Discord Spoiler Tag (`||答案||`) 格式提供，使用者可自行決定是否查看。
+- **使用範例**:
+  - `/wordle_hint`：獲取今天的 Wordle 提示。
+  - `/wordle_hint date:2024-05-20`：獲取特定日期的提示。
 
 ---
 

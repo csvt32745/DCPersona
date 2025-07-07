@@ -47,6 +47,7 @@ DCPersona/
 │   ├── logger.py            # 日誌系統設定
 │   ├── common_utils.py      # 通用輔助函式
 │   ├── image_processor.py   # 圖片 / Emoji / Sticker / 動畫處理核心
+│   ├── wordle_service.py    # Wordle 遊戲提示服務
 │   └── __init__.py
 │
 └── tests/                   # 測試檔案
@@ -142,10 +143,31 @@ flowchart TD
     H --> D
 ```
 
-**主要功能**:
-- **配置管理**: 動態調整工具輪次、檢視當前配置
-- **對話模式**: 支援連續對話，保持上下文
-- **除錯功能**: 顯示工具使用情況和執行統計
+### Slash Command 工作流程 (`/wordle_hint`)
+
+除了透過對話與 Agent 互動外，DCPersona 也支援特定的 Slash Commands，提供更直接的功能操作。
+
+```mermaid
+flowchart TD
+    A[使用者執行 /wordle_hint] --> B[discord_bot/client.py]
+    B --> C{解析日期 (可選)}
+    C --> D[utils/wordle_service.py<br>獲取 Wordle 答案]
+    D --> |成功| E[prompt_system/prompts.py<br>載入提示詞模板]
+    D --> |失敗: 404/Timeout| F[回覆錯誤訊息]
+    E --> G[呼叫 LLM 生成提示]
+    G --> H[utils/wordle_service.py<br>safe_wordle_output<br>確保 Spoiler Tag]
+    H --> I[回覆 Discord 提示]
+```
+
+**詳細步驟說明**:
+1.  **指令觸發**: 使用者在 Discord 中執行 `/wordle_hint` 命令，可選擇性提供 `date` 參數。
+2.  **指令處理**: `discord_bot/client.py` 中的 `DCPersonaBot` 實例接收並處理該指令。
+3.  **日期解析**: 若使用者未提供日期，則使用系統預設時區的當前日期。
+4.  **獲取答案**: 呼叫 `utils/wordle_service.py` 中的 `WordleService` 從 NYT API 獲取指定日期的 Wordle 答案。若 API 請求失敗則向使用者回覆錯誤訊息。
+5.  **提示詞生成**: 使用 `PromptSystem` 載入 `wordle_hint_instructions.txt` 模板，並填入答案和 Persona 風格。
+6.  **LLM 呼叫**: 呼叫 LLM 模型生成創意提示。
+7.  **安全後處理**: 使用 `safe_wordle_output` 函數確保 LLM 的回覆包含 Discord Spoiler Tag (`||...||`)。
+8.  **回覆使用者**: 將最終提示回覆到 Discord 頻道。
 
 ---
 
