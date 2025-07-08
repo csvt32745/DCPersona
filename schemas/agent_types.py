@@ -105,6 +105,7 @@ class DiscordProgressUpdate:
     message: str  # 進度訊息
     progress_percentage: Optional[int] = None  # 進度百分比 (0-100)
     eta_seconds: Optional[int] = None  # 預估剩餘時間（秒）
+    details: Optional[str] = None  # 附加詳細資訊（如工具清單）
 
 
 @dataclass

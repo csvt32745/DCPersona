@@ -327,7 +327,17 @@ class UnifiedAgent(ProgressMixin):
                 return {"tool_results": []}
             
             self.logger.info(f"execute_tools_node: 平行執行 {len(pending_tool_calls)} 個工具調用")
-            
+
+            # Phase3: 先通知工具清單 (todo list)
+            try:
+                await self._notify_progress(
+                    stage="tool_list",
+                    message="🛠️ 工具進度",
+                    todo=[tc["name"] for tc in pending_tool_calls]
+                )
+            except Exception as e:
+                self.logger.warning(f"發送工具清單進度失敗: {e}")
+
             # 通知工具執行階段
             await self._notify_progress(
                 stage="tool_execution",
@@ -407,6 +417,18 @@ class UnifiedAgent(ProgressMixin):
         tool_call_id = tool_call["id"]
         
         self.logger.info(f"執行工具: {tool_name} with args: {tool_args}")
+
+        # Phase3: 工具狀態 - running
+        try:
+            await self._notify_progress(
+                stage="tool_status",
+                message="🔧 正在平行執行工具...",  # 保持原本的進度訊息
+                progress_percentage=50,  # 保持進度條
+                tool=tool_name,
+                status="running"
+            )
+        except Exception as e:
+            self.logger.warning(f"通知工具 {tool_name} 執行中 狀態失敗: {e}")
         
         try:
             # 查找對應的工具
@@ -420,6 +442,17 @@ class UnifiedAgent(ProgressMixin):
                     content=error_result.message,
                     tool_call_id=tool_call_id
                 )
+                # Phase3: 工具狀態 - error
+                try:
+                    await self._notify_progress(
+                        stage="tool_status",
+                        message="🔧 正在平行執行工具...",  # 保持原本的進度訊息
+                        progress_percentage=50,  # 保持進度條
+                        tool=tool_name,
+                        status="error"
+                    )
+                except Exception as ne:
+                    self.logger.warning(f"通知工具 {tool_name} error 狀態失敗: {ne}")
                 return tool_message, error_result
             
             # 執行工具
@@ -455,6 +488,18 @@ class UnifiedAgent(ProgressMixin):
                 tool_call_id=tool_call_id
             )
             
+            # Phase3: 工具狀態 - completed
+            try:
+                await self._notify_progress(
+                    stage="tool_status",
+                    message="🔧 正在平行執行工具...",  # 保持原本的進度訊息
+                    progress_percentage=50,  # 保持進度條
+                    tool=tool_name,
+                    status="completed"
+                )
+            except Exception as ce:
+                self.logger.warning(f"通知工具 {tool_name} completed 狀態失敗: {ce}")
+
             return tool_message, tool_execution_result
                 
         except Exception as e:
@@ -467,6 +512,17 @@ class UnifiedAgent(ProgressMixin):
                 content=error_result.message,
                 tool_call_id=tool_call_id
             )
+            # Phase3: 工具狀態 - error
+            try:
+                await self._notify_progress(
+                    stage="tool_status",
+                    message="🔧 正在平行執行工具...",  # 保持原本的進度訊息
+                    progress_percentage=50,  # 保持進度條
+                    tool=tool_name,
+                    status="error"
+                )
+            except Exception as ne:
+                self.logger.warning(f"通知工具 {tool_name} error 狀態失敗: {ne}")
             return tool_message, error_result
 
     async def _process_reminder_result(self, state: OverallState, tool_execution_result: ToolExecutionResult):

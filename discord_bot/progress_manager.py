@@ -143,11 +143,11 @@ class ProgressManager:
                 # 添加進度條
                 if progress.progress_percentage is not None:
                     progress_bar = self._create_progress_bar(progress.progress_percentage)
-                    embed.add_field(
-                        name="📊 進度",
-                        value=f"{progress_bar} {progress.progress_percentage}%",
-                        inline=True
-                    )
+                    embed.description += f"\n{progress_bar} {progress.progress_percentage}%"
+                
+                # 添加詳細資訊（如工具清單）
+                if progress.details:
+                    embed.description += f"\n\n{progress.details}"
                 
                 # 添加預估時間
                 if progress.eta_seconds is not None and progress.eta_seconds > 0:

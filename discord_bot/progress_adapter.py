@@ -43,6 +43,12 @@ class DiscordProgressAdapter(ProgressObserver):
         self._last_update = 0
         self._streaming_message: Optional[discord.Message] = None
         self._update_lock = asyncio.Lock()
+        self._tool_state_lock = asyncio.Lock()   # <--- 新增
+
+        # Phase3: 工具清單進度追蹤
+        # tool_name -> status (pending|running|completed|error)
+        self.tool_states: Dict[str, str] = {}
+        self._last_tool_update = 0.0  # 最後一次工具進度渲染時間
         
     async def on_progress_update(self, event: ProgressEvent) -> None:
         """處理進度更新事件
@@ -62,24 +68,43 @@ class DiscordProgressAdapter(ProgressObserver):
                 self.logger.warning(f"跳過 Discord 進度更新（無事件循環）: {event.stage} - {event.message}")
                 return
             
+            # 特殊處理 Phase3 工具進度事件
+            if event.stage == "tool_list":
+                async with self._tool_state_lock:
+                    todo_tools = event.metadata.get("todo", []) if event.metadata else []
+                    self.tool_states = {tool: "pending" for tool in todo_tools}
+
+            if event.stage == "tool_status":
+                tool_name = event.metadata.get("tool") if event.metadata else None
+                status = event.metadata.get("status") if event.metadata else None
+                if tool_name and status:
+                    async with self._tool_state_lock:
+                        self.tool_states[tool_name] = status
+
             # 如果正在串流，則不顯示一般進度更新
             if self._streaming_message:
                 return
-            
+
+            # 組合工具清單（如果有的話）
+            tool_list_str = ""
+            async with self._tool_state_lock:
+                tool_list_str = self._compose_tool_list_str()
+
             # 轉換為 Discord 進度更新格式
             discord_progress = DiscordProgressUpdate(
                 stage=event.stage,
                 message=event.message,
                 progress_percentage=event.progress_percentage,
-                eta_seconds=event.eta_seconds
+                eta_seconds=event.eta_seconds,
+                details=tool_list_str if tool_list_str else None
             )
-            
+
             # 使用現有的進度管理器發送更新
             self._last_progress_message = await self.progress_manager.send_or_update_progress(
                 original_message=self.original_message,
                 progress=discord_progress
             )
-            
+
             self.logger.debug(f"Discord 進度更新已發送: {event.stage} - {event.message}")
             
         except RuntimeError as e:
@@ -89,6 +114,23 @@ class DiscordProgressAdapter(ProgressObserver):
                 self.logger.error(f"Discord 進度更新失敗: {e}")
         except Exception as e:
             self.logger.error(f"Discord 進度更新失敗: {e}", exc_info=True)
+
+    def _compose_tool_list_str(self) -> str:
+        """組合工具進度清單字串，只回傳字串不發送訊息"""
+        if not self.tool_states:
+            return ""
+
+        symbols = {
+            "pending": "⚪",      # 未開始
+            "running": "🔄",     # 執行中
+            "completed": "✅",   # 完成
+            "error": "❌"        # 失敗
+        }
+
+        # 直接以 dict 插入順序產生無序列表
+        lines = [f"• {symbols.get(status, '⚪')} {tool}" for tool, status in self.tool_states.items()]
+        content = "\n".join(lines)
+        return f"🛠️ 工具進度\n{content}"
     
     async def on_streaming_chunk(self, content: str, is_final: bool = False) -> None:
         """處理串流內容塊
