@@ -467,10 +467,15 @@ class AppConfig:
         Returns:
             bool: 是否啟用
         """
-        # 特殊處理 reminder 工具
+        # 特殊處理 reminder 工具（根據 reminder.enabled）
         if tool_name == "reminder":
             return self.reminder.enabled
-        
+
+        # youtube_summary 預設啟用（若未在 config.tools 中明確設置）
+        if tool_name == "youtube_summary":
+            tool_config = self.get_tool_config(tool_name)
+            return tool_config.enabled if tool_config else True
+
         tool_config = self.get_tool_config(tool_name)
         return tool_config.enabled if tool_config else False
     

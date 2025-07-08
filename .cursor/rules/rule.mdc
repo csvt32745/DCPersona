@@ -9,4 +9,7 @@ alwaysApply: true
 - 任務開始前，請先向 user 確認 task list 和架構，確認後再進行
 - 請在任務結束後向 user 確認結果，之後再寫 test
 - test 請用 `python -m pytest` 來跑全部測試，包含 regression test，請務必把所有 test error 修復
-- 所有 doc 為 `project_rules.md`, `README.md`, `project_structure.md`
+- 所有 doc 為 
+  - 1. `README.md`: 對外簡述功能項、檔案架構
+  - 2. `project_rules.md`: 開發概覽用的專案架構和職責，以及大架構的 Workflow
+  - 3. `project_structure.md`: 開發用詳細作法，Workflow 和 Module 細項作法職責

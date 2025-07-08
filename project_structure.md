@@ -14,6 +14,7 @@ DCPersona/
 │
 ├── tools/                   # **[新增]** LangChain 工具定義
 │   ├── google_search.py     # Google 搜尋工具
+│   ├── youtube_summary.py   # YouTube 摘要工具
 │   └── set_reminder.py      # 設定提醒工具
 │
 ├── event_scheduler/         # **[新增]** 通用事件排程系統
@@ -49,6 +50,7 @@ DCPersona/
 │   ├── common_utils.py      # 通用輔助函式
 │   ├── image_processor.py   # 圖片 / Emoji / Sticker / 動畫處理核心
 │   ├── wordle_service.py    # Wordle 遊戲提示服務
+│   ├── youtube_utils.py     # YouTube URL 解析與工具輔助
 │   └── __init__.py
 │
 └── tests/                   # 測試檔案
@@ -361,6 +363,21 @@ progress:
   2. 工具成功後，Agent 會回覆確認訊息，例如："好的，已為您設定提醒。"`
   3. 時間到達時，Bot 會在原始頻道發送提醒訊息。
 - **檔案位置**: `tools/set_reminder.py`
+
+#### 3. YouTube 摘要 (`youtube_summary`)
+- **功能**: 當訊息中出現 YouTube 影片 URL 時，Agent 會自動呼叫此工具並回傳影片重點摘要，包含章節大綱與重要觀點。
+- **使用方式**: ✅ 全自動。使用者僅需貼上 YouTube 連結或含有影片連結的問題，例如：
+  - `https://youtu.be/pmNP54vTlxg 這部影片在講什麼？`
+- **核心流程**:
+  1. 在 `generate_query_or_plan` 節點，`UnifiedAgent` 透過 `extract_first_youtube_url()` 偵測最近訊息中的第一個影片連結。
+  2. 若已啟用 `youtube_summary` 工具，系統會程式化插入一筆 tool_call，並先於其它工具執行。
+  3. `YouTubeSummaryTool` 使用 Gemini API (`types.Part.from_uri`) 讀取影片並生成摘要文字。
+  4. 結果以 `ToolExecutionResult` 回傳，並與 LLM 回覆合併。
+- **快取機制**: 影片摘要結果以 `video_id -> (timestamp, result)` 映射存放於類別層級 `_cache`，預設 TTL 為 24 小時，可避免重複呼叫 API。
+- **檔案位置**:
+  - `tools/youtube_summary.py`：工具實作
+  - `utils/youtube_utils.py`：URL Regex 解析與 `extract_first_youtube_url()`、`get_video_id()` 輔助函式
+  - **測試**: `tests/test_youtube_summary_tool.py`, `tests/test_youtube_summary_cache.py`
 
 ---
 

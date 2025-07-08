@@ -14,6 +14,7 @@ DCPersona/
 │
 ├── tools/                   # LangChain 工具定義
 │   ├── google_search.py     # Google 搜尋工具
+│   ├── youtube_summary.py   # YouTube 摘要工具
 │   └── set_reminder.py      # 設定提醒工具
 │
 ├── event_scheduler/         # 通用事件排程系統
@@ -66,6 +67,7 @@ DCPersona/
 
 2.  **`tools/` - LangChain 工具定義**:
     *   `google_search.py`: 實作 Google 搜尋工具，用於網路查詢。
+    *   `youtube_summary.py`: 實作 YouTube 影片摘要工具，用於為影片連結生成摘要。
     *   `set_reminder.py`: 實作設定提醒工具，用於處理時間解析和提醒排程。
 
 3.  **`event_scheduler/` - 通用事件排程系統**:

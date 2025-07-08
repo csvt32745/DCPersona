@@ -9,6 +9,8 @@ import asyncio
 import logging
 import json
 import copy
+import re
+import uuid
 from typing import Dict, Any, List, Optional, Literal, Union
 from datetime import datetime
 
@@ -28,6 +30,8 @@ from .agent_utils import _extract_text_content
 
 # 導入 LangChain 工具
 from tools import GoogleSearchTool, set_reminder
+from tools.youtube_summary import YouTubeSummaryTool
+from utils.youtube_utils import extract_first_youtube_url
 from langchain_core.messages import ToolMessage
 
 
@@ -123,6 +127,17 @@ class UnifiedAgent(ProgressMixin):
             self.available_tools.append(set_reminder)
             self.tool_mapping[set_reminder.name] = set_reminder
             self.logger.info("已初始化提醒工具")
+
+        # 初始化 YouTube 摘要工具（僅加入 mapping，不綁定給 LLM）
+        if self.config.is_tool_enabled("youtube_summary") and self.google_client:
+            self.youtube_summary_tool = YouTubeSummaryTool(
+                google_client=self.google_client,
+                config=self.config,
+                logger=self.logger
+            )
+            # 不加入 self.available_tools 以避免暴露給 LLM
+            self.tool_mapping[self.youtube_summary_tool.name] = self.youtube_summary_tool
+            self.logger.info("已初始化 YouTube 摘要工具")
         
         # 綁定工具到 tool_analysis_llm
         if self.available_tools and self.tool_analysis_llm:
@@ -198,6 +213,28 @@ class UnifiedAgent(ProgressMixin):
                     "tool_round": 0
                 }
             
+            # 檢測 YouTube URL，若有則預備一個程式化工具調用 (稍後與 LLM 結果合併)
+            youtube_tool_call = None
+
+            # 在最近 10 則訊息內尋找第一個 YouTube URL（由近到遠）
+            yt_url = None
+            recent_msgs = state.messages[-10:]
+            for m in reversed(recent_msgs):
+                text_part = _extract_text_content(m.content)
+                hit = extract_first_youtube_url(text_part)
+                if hit:
+                    yt_url = hit
+                    break
+
+            if yt_url and self.config.is_tool_enabled("youtube_summary"):
+                self.logger.info(f"偵測到 YouTube URL: {yt_url}，將加入 youtube_summary 工具調用 (稍後合併)")
+
+                youtube_tool_call = {
+                    "id": str(uuid.uuid4()),
+                    "name": self.youtube_summary_tool.name,
+                    "args": {"url": yt_url}
+                }
+            
             # 使用綁定工具的 LLM 進行分析
             if not self.tool_analysis_llm:
                 # 回退到簡單邏輯
@@ -214,16 +251,23 @@ class UnifiedAgent(ProgressMixin):
                 ai_message = await self.tool_analysis_llm.ainvoke(messages_for_llm)
                 
                 # 檢查是否有工具調用
-                if ai_message.tool_calls:
+                if ai_message.tool_calls or youtube_tool_call:
                     # 有工具調用，需要執行工具
-                    logging.debug(f"ai_message.tool_calls: {ai_message.tool_calls}")
+                    combined_tool_calls = list(ai_message.tool_calls) if ai_message.tool_calls else []
+                    if youtube_tool_call:
+                        # 將 YouTube 摘要工具放在最前面，避免與其它工具衝突
+                        combined_tool_calls.insert(0, youtube_tool_call)
+
+                    logging.debug(f"最終 tool_calls: {combined_tool_calls}")
+
                     agent_plan = AgentPlan(
                         needs_tools=True,
-                        reasoning=f"LLM 決定調用 {len(ai_message.tool_calls)} 個工具"
+                        reasoning="LLM 決定調用工具" + ("，並加入 YouTube 摘要" if youtube_tool_call else "")
                     )
-                    # 將 tool_calls 存儲在 state 中供後續節點使用
+
+                    # 將 combined_tool_calls 存儲在 state 中供後續節點使用
                     state.metadata = state.metadata or {}
-                    state.metadata["pending_tool_calls"] = ai_message.tool_calls
+                    state.metadata["pending_tool_calls"] = combined_tool_calls
                     if ai_message.content:
                         state.messages.append(MsgNode(
                             role="assistant",
