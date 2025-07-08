@@ -41,7 +41,8 @@ DCPersona/
 ├── prompt_system/           # 統一提示詞管理系統
 │   ├── prompts.py           # 核心提示詞功能與 PromptSystem
 │   └── tool_prompts/        # 工具相關提示詞模板
-│       └── wordle_hint_instructions.txt # Wordle 提示生成指令
+│       ├── wordle_hint_instructions.txt # Wordle 提示生成指令
+│       └── wordle_hint_types/           # 提示風格模板 (多個 .txt)
 │
 ├── utils/                   # 通用工具與配置
 │   ├── config_loader.py     # 型別安全配置載入器

@@ -245,8 +245,9 @@ DCPersona 透過 LangChain 的工具系統，賦予 Agent 與外部世界互動�
 - **功能**: 獲取當日或指定日期的 Wordle 遊戲提示，並由 LLM 生成富有趣味的創意線索。
 - **特色**:
   - **即時互動**: 無需等待 Agent 回應，指令立即觸發。
-  - **創意提示**: 由 LLM 生成間接、有趣的提示，而非直接洩漏答案。
-  - **防雷設計**: 答案以 Discord Spoiler Tag (`||答案||`) 格式提供，使用者可自行決定是否查看。
+  - **多樣化風格**: 提示風格已模組化，所有風格模板位於 `prompt_system/tool_prompts/wordle_hint_types/`，Bot 會隨機選擇一種風格並注入至主提示詞。
+  - **自我驗證**: LLM 會在 `<check>...</check>` 區塊中逐句說明提示與答案的關聯性；Bot 會自動將其轉換成 `題解:\n|| ... ||` 形式並隱藏於 Spoiler 中，方便需要時查看。
+  - **隱私防雷**: 任意 `<check>...</check>` 心理描寫區塊會被轉換為 `|| ... ||` Spoiler，答案同樣使用 Discord Spoiler Tag (`||答案||`) 包裹，避免意外暴雷。
 - **使用範例**:
   - `/wordle_hint`：獲取今天的 Wordle 提示。
   - `/wordle_hint date:2024-05-20`：獲取特定日期的提示。

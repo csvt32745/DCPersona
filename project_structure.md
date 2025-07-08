@@ -164,7 +164,7 @@ flowchart TD
 2.  **指令處理**: `discord_bot/client.py` 中的 `DCPersonaBot` 實例接收並處理該指令。
 3.  **日期解析**: 若使用者未提供日期，則使用系統預設時區的當前日期。
 4.  **獲取答案**: 呼叫 `utils/wordle_service.py` 中的 `WordleService` 從 NYT API 獲取指定日期的 Wordle 答案。若 API 請求失敗則向使用者回覆錯誤訊息。
-5.  **提示詞生成**: 使用 `PromptSystem` 載入 `wordle_hint_instructions.txt` 模板，並填入答案和 Persona 風格。
+5.  **提示詞生成**: 使用 `PromptSystem` 載入 `wordle_hint_instructions.txt` 模板，並從 `prompt_system/tool_prompts/wordle_hint_types/` 隨機注入一種提示風格，再填入答案和 Persona 風格。
 6.  **LLM 呼叫**: 呼叫 LLM 模型生成創意提示。
 7.  **安全後處理**: 使用 `safe_wordle_output` 函數確保 LLM 的回覆包含 Discord Spoiler Tag (`||...||`)。
 8.  **回覆使用者**: 將最終提示回覆到 Discord 頻道。

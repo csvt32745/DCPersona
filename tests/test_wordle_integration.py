@@ -14,7 +14,7 @@ from utils.wordle_service import (
     WordleService, WordleResult, WordleNotFound, WordleAPITimeout, 
     WordleServiceError, safe_wordle_output, get_wordle_service
 )
-from prompt_system.prompts import PromptSystem
+from prompt_system.prompts import PromptSystem, get_current_date
 
 
 class TestWordleService:
@@ -129,17 +129,23 @@ class TestWordlePromptSystem:
         """測試 wordle_hint_instructions 格式化"""
         prompt_system = PromptSystem()
         
+        # 模擬從檔案讀取一個提示風格
+        hint_style_description = "這是一個測試用的提示風格描述。"
+        
         formatted_prompt = prompt_system.get_tool_prompt(
             "wordle_hint_instructions",
             solution="REACT",
-            persona_style="友善且有趣"
+            persona_style="友善且有趣",
+            hint_style_description=hint_style_description
         )
         
         assert "REACT" in formatted_prompt
         assert "友善且有趣" in formatted_prompt
+        assert hint_style_description in formatted_prompt
         assert "|| REACT ||" in formatted_prompt
         assert "系統規則" in formatted_prompt
-        assert "提示風格選擇" in formatted_prompt
+        assert "提示風格指南" in formatted_prompt
+        assert "提示風格選擇" not in formatted_prompt
     
     def test_wordle_hint_instructions_missing_params(self):
         """測試缺少必要參數時的錯誤處理"""

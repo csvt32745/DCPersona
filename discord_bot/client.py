@@ -11,6 +11,8 @@ import logging
 from typing import Dict, Any, Optional
 from datetime import datetime, date
 import pytz
+import re
+from pathlib import Path
 
 from utils.config_loader import load_config, load_typed_config
 from .message_handler import get_message_handler
@@ -175,7 +177,13 @@ async def wordle_hint_command(interaction: discord.Interaction, date: Optional[s
     logger = logging.getLogger(__name__)
     
     # 延遲回應，因為可能需要時間獲取答案和生成提示
-    await interaction.response.defer()
+    try:
+        if not interaction.response.is_done():
+            await interaction.response.defer()
+    except discord.errors.HTTPException as http_exc:
+        # 忽略已回應 (40060) 或已失效 (10062) 的互動錯誤
+        if getattr(http_exc, 'code', None) not in (40060, 10062):
+            raise
     
     try:
         # 1. 解析日期
@@ -231,12 +239,24 @@ async def wordle_hint_command(interaction: discord.Interaction, date: Optional[s
                     
             except Exception as e:
                 logger.warning(f"獲取 persona 風格失敗，使用預設風格: {e}")
-            
-            # 使用 PromptSystem 獲取工具提示詞
+
+            # 1. 取得隨機的提示風格描述
+            hint_style_dir = Path("prompt_system/tool_prompts/wordle_hint_types")
+            hint_style_description = bot.prompt_system.random_system_prompt(
+                hint_style_dir, 
+                use_cache=False
+            )
+            if not hint_style_description:
+                logger.error("無法獲取隨機 Wordle 提示風格，流程中止。")
+                await interaction.followup.send("❌ 內部錯誤：無法載入提示風格。")
+                return
+
+            # 2. 取得主提示詞模板並傳入風格描述
             prompt_template = bot.prompt_system.get_tool_prompt(
                 "wordle_hint_instructions",
                 solution=solution,
-                persona_style=persona_style
+                persona_style=persona_style,
+                hint_style_description=hint_style_description
             )
             
             logger.debug(f"Wordle 提示生成提示詞: {prompt_template}")
@@ -244,6 +264,17 @@ async def wordle_hint_command(interaction: discord.Interaction, date: Optional[s
             # 調用 LLM 生成提示
             response = await bot.wordle_llm.ainvoke([{"role": "user", "content": prompt_template}])
             hint_content = response.content
+
+            # 將 <think> 和 <check> 區塊轉為 Discord spoiler
+            # <think>...</think> -> ||...||
+            hint_content = re.sub(r'<think>(.*?)</think>', r'||\1||', hint_content, flags=re.DOTALL | re.IGNORECASE)
+
+            # <check>...</check> -> 題解:\n|| ... ||
+            def _replace_check(match):
+                inner = match.group(1).strip()
+                return f"題解:\n|| {inner} ||"
+
+            hint_content = re.sub(r'<check>(.*?)</check>', _replace_check, hint_content, flags=re.DOTALL | re.IGNORECASE)
             
             # 4. 安全後處理
             safe_hint = safe_wordle_output(hint_content, solution)

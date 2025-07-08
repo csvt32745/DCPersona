@@ -52,8 +52,8 @@ class PromptSystem:
             self.logger.error(f"載入提示詞檔案失敗 {filename}: {e}")
             return ""
     
-    def random_system_prompt(self, root: Union[str, Path] = ROOT_PROMPT_DIR) -> str:
-        """隨機選取 persona 目錄下的提示詞"""
+    def random_system_prompt(self, root: Union[str, Path] = ROOT_PROMPT_DIR, use_cache: bool = True) -> str:
+        """隨機選取指定目錄下的提示詞檔案"""
         try:
             prompt_files = list(Path(root).glob("*.txt"))
             if not prompt_files:
@@ -61,19 +61,21 @@ class PromptSystem:
                 return ""
             
             filename = random.choice(prompt_files)
-            persona_name = filename.stem
+            item_name = filename.stem
             
-            # 檢查快取
-            if self.persona_cache_enabled and persona_name in self._persona_cache:
-                self.logger.info(f"從快取載入 {persona_name} persona")
-                return self._persona_cache[persona_name]
+            # 僅在啟用時檢查快取
+            if use_cache and self.persona_cache_enabled and item_name in self._persona_cache:
+                self.logger.info(f"從快取載入 {item_name}")
+                return self._persona_cache[item_name]
             
-            # 載入並快取
+            # 載入內容
             content = self.get_prompt(filename)
-            if self.persona_cache_enabled and content:
-                self._persona_cache[persona_name] = content
             
-            self.logger.info(f"隨機選擇 {persona_name} persona")
+            # 僅在啟用時更新快取
+            if use_cache and self.persona_cache_enabled and content:
+                self._persona_cache[item_name] = content
+            
+            self.logger.info(f"隨機選擇提示詞: {item_name} from {root}")
             return content
             
         except Exception as e:
