@@ -181,6 +181,7 @@ DCPersona/
 │
 ├── discord_bot/             # Discord 整合層
 │   ├── client.py            # Discord Client 初始化
+│   ├── commands/            # Slash Command 定義 (自動掃描並集中註冊)
 │   ├── message_handler.py   # 訊息事件處理
 │   ├── message_collector.py # 多模態訊息收集
 │   ├── progress_manager.py  # 進度消息管理
@@ -251,6 +252,25 @@ DCPersona 透過 LangChain 的工具系統，賦予 Agent 與外部世界互動�
 - **使用範例**:
   - `/wordle_hint`：獲取今天的 Wordle 提示。
   - `/wordle_hint date:2024-05-20`：獲取特定日期的提示。
+
+## 工作流程
+
+### Wordle Hint Slash Command
+
+```mermaid
+flowchart TD
+    A["/wordle_hint 指令觸發"] --> B["wordle_hint_command\n(discord_bot/commands/wordle_hint.py)"]
+    B --> C{日期參數?}
+    C -- 無效格式 --> X["回覆日期格式錯誤"]
+    C -- 有效或預設 --> D["WordleService.fetch_solution"]
+    D -- 404 / Timeout --> Y["回覆 API 失敗/超時"]
+    D -- 取得答案 --> E["PromptSystem.get_tool_prompt"]
+    E --> F["LLM 產生提示"]
+    F --> G["safe_wordle_output 處理 spoiler"]
+    G --> H["interaction.followup.send"]
+```
+
+> 註：所有 Slash Command 由 `register_commands(bot)` 於啟動階段自動註冊，無需手動新增。
 
 ---
 

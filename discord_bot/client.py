@@ -23,7 +23,7 @@ from event_scheduler.scheduler import EventScheduler
 from utils.wordle_service import get_wordle_service, WordleNotFound, WordleAPITimeout, WordleServiceError, safe_wordle_output
 from prompt_system.prompts import PromptSystem
 from langchain_google_genai import ChatGoogleGenerativeAI
-
+from discord_bot.commands import register_commands
 
 class DCPersonaBot(commands.Bot):
     """自定義 Bot 類，支援 Slash Commands"""
@@ -163,137 +163,6 @@ class DCPersonaBot(commands.Bot):
 
 
 # Slash Command 實作
-@app_commands.command(name="wordle_hint", description="獲取 Wordle 遊戲提示")
-@app_commands.describe(date="指定日期 (YYYY-MM-DD)，預設為今天")
-async def wordle_hint_command(interaction: discord.Interaction, date: Optional[str] = None):
-    """
-    /wordle_hint Slash Command 處理器
-    
-    Args:
-        interaction: Discord 互動對象
-        date: 可選的日期字串，格式為 YYYY-MM-DD
-    """
-    bot: DCPersonaBot = interaction.client
-    logger = logging.getLogger(__name__)
-    
-    # 延遲回應，因為可能需要時間獲取答案和生成提示
-    try:
-        if not interaction.response.is_done():
-            await interaction.response.defer()
-    except discord.errors.HTTPException as http_exc:
-        # 忽略已回應 (40060) 或已失效 (10062) 的互動錯誤
-        if getattr(http_exc, 'code', None) not in (40060, 10062):
-            raise
-    
-    try:
-        # 1. 解析日期
-        if date:
-            try:
-                target_date = datetime.strptime(date, "%Y-%m-%d").date()
-            except ValueError:
-                await interaction.followup.send("❌ 日期格式錯誤！請使用 YYYY-MM-DD 格式，例如：2024-01-15")
-                return
-        else:
-            # 使用配置中的時區獲取今天的日期
-            timezone = bot.config.system.timezone
-            tz = pytz.timezone(timezone)
-            target_date = datetime.now(tz).date()
-        
-        logger.info(f"用戶 {interaction.user} 請求 {target_date} 的 Wordle 提示")
-        
-        # 2. 獲取 Wordle 答案
-        try:
-            wordle_result = await bot.wordle_service.fetch_solution(target_date)
-            solution = wordle_result.solution
-            logger.info(f"成功獲取 {target_date} 的 Wordle 答案")
-        except WordleNotFound:
-            await interaction.followup.send(f"❌ 找不到 {target_date} 的 Wordle 資料，請檢查日期是否正確。")
-            return
-        except WordleAPITimeout:
-            await interaction.followup.send("⏰ 請求超時，請稍後再試。")
-            return
-        except WordleServiceError as e:
-            await interaction.followup.send(f"❌ 服務暫時不可用：{str(e)}")
-            return
-        
-        # 3. 生成提示
-        if not bot.wordle_llm:
-            await interaction.followup.send("❌ LLM 服務不可用，無法生成提示。")
-            return
-        
-        try:
-            # 獲取當前 persona 風格
-            persona_style = "友善且有趣"  # 預設風格
-            try:
-                # 嘗試獲取實際的 persona 內容
-                if bot.config.prompt_system.persona.enabled:
-                    if bot.config.prompt_system.persona.random_selection:
-                        persona_style = bot.prompt_system.random_system_prompt(
-                            bot.config.prompt_system.persona.persona_directory
-                        )
-                    else:
-                        persona_style = bot.prompt_system.get_specific_persona(
-                            bot.config.prompt_system.persona.default_persona,
-                            bot.config.prompt_system.persona.persona_directory
-                        )
-                    
-            except Exception as e:
-                logger.warning(f"獲取 persona 風格失敗，使用預設風格: {e}")
-
-            # 1. 取得隨機的提示風格描述
-            hint_style_dir = Path("prompt_system/tool_prompts/wordle_hint_types")
-            hint_style_description = bot.prompt_system.random_system_prompt(
-                hint_style_dir, 
-                use_cache=False
-            )
-            if not hint_style_description:
-                logger.error("無法獲取隨機 Wordle 提示風格，流程中止。")
-                await interaction.followup.send("❌ 內部錯誤：無法載入提示風格。")
-                return
-
-            # 2. 取得主提示詞模板並傳入風格描述
-            prompt_template = bot.prompt_system.get_tool_prompt(
-                "wordle_hint_instructions",
-                solution=solution,
-                persona_style=persona_style,
-                hint_style_description=hint_style_description
-            )
-            
-            logger.debug(f"Wordle 提示生成提示詞: {prompt_template}")
-            
-            # 調用 LLM 生成提示
-            response = await bot.wordle_llm.ainvoke([{"role": "user", "content": prompt_template}])
-            hint_content = response.content
-
-            # 將 <think> 和 <check> 區塊轉為 Discord spoiler
-            # <think>...</think> -> ||...||
-            hint_content = re.sub(r'<think>(.*?)</think>', r'||\1||', hint_content, flags=re.DOTALL | re.IGNORECASE)
-
-            # <check>...</check> -> 題解:\n|| ... ||
-            def _replace_check(match):
-                inner = match.group(1).strip()
-                return f"題解:\n|| {inner} ||"
-
-            hint_content = re.sub(r'<check>(.*?)</check>', _replace_check, hint_content, flags=re.DOTALL | re.IGNORECASE)
-            
-            # 4. 安全後處理
-            safe_hint = safe_wordle_output(hint_content, solution)
-            
-            # 5. 發送回應
-            await interaction.followup.send(safe_hint)
-            
-        except Exception as e:
-            logger.error(f"生成 Wordle 提示時發生錯誤: {e}")
-            await interaction.followup.send("❌ 生成提示時發生錯誤，請稍後再試。")
-    
-    except Exception as e:
-        logger.error(f"Wordle hint 指令處理時發生未預期錯誤: {e}")
-        try:
-            await interaction.followup.send("❌ 處理指令時發生內部錯誤，請稍後再試。")
-        except:
-            pass  # 如果連錯誤訊息都發送不了，就忽略
-
-
 def create_discord_client(config: Optional[AppConfig] = None, event_scheduler: Optional[EventScheduler] = None) -> DCPersonaBot:
     """
     創建和配置 Discord 客戶端實例
@@ -311,8 +180,8 @@ def create_discord_client(config: Optional[AppConfig] = None, event_scheduler: O
     # 創建 Bot 實例
     bot = DCPersonaBot(config, event_scheduler)
     
-    # 添加 Slash Commands 到 CommandTree
-    bot.tree.add_command(wordle_hint_command)
+    # 集中註冊 Slash Commands
+    register_commands(bot)
     
     # 記錄客戶端 ID 以供邀請 URL
     client_id = config.discord.client_id

@@ -21,6 +21,7 @@ DCPersona/
 │
 ├── discord_bot/             # **[核心]** Discord 整合層
 │   ├── client.py            # Discord Client 初始化與設定
+│   ├── commands/            # Slash Command 定義 (自動掃描並集中註冊)
 │   ├── message_handler.py   # Discord 訊息事件處理主流程
 │   ├── message_collector.py # 訊息收集、歷史處理與多模態支援
 │   ├── progress_manager.py  # Discord 進度消息管理系統
@@ -149,25 +150,26 @@ flowchart TD
 
 ```mermaid
 flowchart TD
-    A[使用者執行 /wordle_hint] --> B[discord_bot/client.py]
+    A[使用者執行 /wordle_hint] --> B[discord_bot/commands/wordle_hint.py]
     B --> C{解析日期 (可選)}
     C --> D[utils/wordle_service.py<br>獲取 Wordle 答案]
     D --> |成功| E[prompt_system/prompts.py<br>載入提示詞模板]
     D --> |失敗: 404/Timeout| F[回覆錯誤訊息]
     E --> G[呼叫 LLM 生成提示]
     G --> H[utils/wordle_service.py<br>safe_wordle_output<br>確保 Spoiler Tag]
-    H --> I[回覆 Discord 提示]
+    H --> I[register_commands()<br>集中註冊到 Bot]
+    I --> J[Discord 回覆提示]
 ```
 
 **詳細步驟說明**:
 1.  **指令觸發**: 使用者在 Discord 中執行 `/wordle_hint` 命令，可選擇性提供 `date` 參數。
-2.  **指令處理**: `discord_bot/client.py` 中的 `DCPersonaBot` 實例接收並處理該指令。
+2.  **指令處理**: `discord_bot/commands/wordle_hint.py` 中定義的 `wordle_hint_command` 透過 `register_commands(bot)` 事先註冊到 `DCPersonaBot`，收到互動後開始處理指令。
 3.  **日期解析**: 若使用者未提供日期，則使用系統預設時區的當前日期。
 4.  **獲取答案**: 呼叫 `utils/wordle_service.py` 中的 `WordleService` 從 NYT API 獲取指定日期的 Wordle 答案。若 API 請求失敗則向使用者回覆錯誤訊息。
 5.  **提示詞生成**: 使用 `PromptSystem` 載入 `wordle_hint_instructions.txt` 模板，並從 `prompt_system/tool_prompts/wordle_hint_types/` 隨機注入一種提示風格，再填入答案和 Persona 風格。
 6.  **LLM 呼叫**: 呼叫 LLM 模型生成創意提示。
 7.  **安全後處理**: 使用 `safe_wordle_output` 函數確保 LLM 的回覆包含 Discord Spoiler Tag (`||...||`)。
-8.  **回覆使用者**: 將最終提示回覆到 Discord 頻道。
+8.  **回覆使用者**: 將最終提示回覆到 Discord 頻道（由 `wordle_hint_command` 直接調用 `interaction.followup.send()`）。
 
 ---
 
@@ -248,6 +250,24 @@ flowchart TD
 - **訊息快取**: 儲存最近接收的訊息
 - **緩存管理**: 管理訊息的過期和清理
 - **性能優化**: 減少重複訊息處理
+
+#### commands/ - Slash Command 模組
+負責所有 Discord Slash Commands 的定義與集中註冊。
+
+**核心概念**:
+- **自動掃描**: `discord_bot/commands/__init__.py` 於啟動時會掃描資料夾內所有 `.py` 檔案並收集 `app_commands.Command` 物件，呼叫 `register_commands(bot)` 即可一次註冊。 
+- **低耦合**: 每個指令可獨立一檔，或多個小指令共用一檔。只需使用 `@app_commands.command` 裝飾即可。
+- **型別安全**: 透過 `TYPE_CHECKING` 避免循環匯入，並在指令函式中取得 `DCPersonaBot` 實例。
+
+##### /wordle_hint 指令
+- **檔案**: `discord_bot/commands/wordle_hint.py`
+- **流程摘要**:
+  1. 解析日期參數（預設取當前時區日期）。
+  2. 使用 `WordleService.fetch_solution` 取得 Wordle 答案。
+  3. 透過 `PromptSystem.get_tool_prompt` 注入隨機提示風格與 persona 後生成提示詞。
+  4. 呼叫 LLM 生成提示，並使用 `safe_wordle_output` 確保 Spoiler Tag。
+  5. 透過 `interaction.followup.send()` 回覆 Discord 訊息。
+- **相關測試**: `tests/test_wordle_integration.py`, `tests/test_actual_discord_usage.py`
 
 ### schemas/ - 型別安全架構
 
