@@ -57,9 +57,11 @@ async def wordle_hint_command(
             try:
                 target_date = datetime.strptime(date, "%Y-%m-%d").date()
             except ValueError:
-                await interaction.followup.send(
-                    "❌ 日期格式錯誤！請使用 YYYY-MM-DD 格式，例如：2024-01-15"
+                error_embed = discord.Embed(
+                    description="❌ 日期格式錯誤！請使用 YYYY-MM-DD 格式，例如：2024-01-15",
+                    color=discord.Color.red(),
                 )
+                await interaction.followup.send(embed=error_embed)
                 return
         else:
             # 使用配置中的時區獲取今天的日期
@@ -75,20 +77,34 @@ async def wordle_hint_command(
             solution = wordle_result.solution
             logger.info(f"成功獲取 {target_date} 的 Wordle 答案")
         except WordleNotFound:
-            await interaction.followup.send(
-                f"❌ 找不到 {target_date} 的 Wordle 資料，請檢查日期是否正確。"
+            not_found_embed = discord.Embed(
+                description=f"❌ 找不到 {target_date} 的 Wordle 資料，請檢查日期是否正確。",
+                color=discord.Color.red(),
             )
+            await interaction.followup.send(embed=not_found_embed)
             return
         except WordleAPITimeout:
-            await interaction.followup.send("⏰ 請求超時，請稍後再試。")
+            timeout_embed = discord.Embed(
+                description="⏰ 請求超時，請稍後再試。",
+                color=discord.Color.orange(),
+            )
+            await interaction.followup.send(embed=timeout_embed)
             return
         except WordleServiceError as e:
-            await interaction.followup.send(f"❌ 服務暫時不可用：{str(e)}")
+            service_error_embed = discord.Embed(
+                description=f"❌ 服務暫時不可用：{str(e)}",
+                color=discord.Color.red(),
+            )
+            await interaction.followup.send(embed=service_error_embed)
             return
 
         # 3. 生成提示
         if not bot.wordle_llm:
-            await interaction.followup.send("❌ LLM 服務不可用，無法生成提示。")
+            llm_error_embed = discord.Embed(
+                description="❌ LLM 服務不可用，無法生成提示。",
+                color=discord.Color.red(),
+            )
+            await interaction.followup.send(embed=llm_error_embed)
             return
 
         try:
@@ -115,7 +131,11 @@ async def wordle_hint_command(
             )
             if not hint_style_description:
                 logger.error("無法獲取隨機 Wordle 提示風格，流程中止。")
-                await interaction.followup.send("❌ 內部錯誤：無法載入提示風格。")
+                style_error_embed = discord.Embed(
+                    description="❌ 內部錯誤：無法載入提示風格。",
+                    color=discord.Color.red(),
+                )
+                await interaction.followup.send(embed=style_error_embed)
                 return
 
             # 2. 取得主提示詞模板並傳入風格描述
@@ -157,15 +177,28 @@ async def wordle_hint_command(
             safe_hint = safe_wordle_output(hint_content, solution)
 
             # 5. 發送回應
-            await interaction.followup.send(safe_hint)
+            success_embed = discord.Embed(
+                title=f"Wordle 提示 - {target_date}",
+                description=safe_hint,
+                color=discord.Color.green(),
+            )
+            await interaction.followup.send(embed=success_embed)
 
         except Exception as e:
             logger.error(f"生成 Wordle 提示時發生錯誤: {e}")
-            await interaction.followup.send("❌ 生成提示時發生錯誤，請稍後再試。")
+            generate_error_embed = discord.Embed(
+                description="❌ 生成提示時發生錯誤，請稍後再試。",
+                color=discord.Color.red(),
+            )
+            await interaction.followup.send(embed=generate_error_embed)
 
     except Exception as e:
         logger.error(f"Wordle hint 指令處理時發生未預期錯誤: {e}")
         try:
-            await interaction.followup.send("❌ 處理指令時發生內部錯誤，請稍後再試。")
+            internal_error_embed = discord.Embed(
+                description="❌ 處理指令時發生內部錯誤，請稍後再試。",
+                color=discord.Color.red(),
+            )
+            await interaction.followup.send(embed=internal_error_embed)
         except Exception:
             pass 
