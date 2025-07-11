@@ -276,7 +276,7 @@ async def test_progress_adapter_integration():
     with patch('discord_bot.progress_adapter.get_progress_manager') as mock_get_manager:
         mock_manager = Mock()
         mock_manager.send_or_update_progress = AsyncMock()
-        mock_manager.cleanup_progress_message = Mock()  # 改為同步 Mock
+        mock_manager.cleanup_by_message_id = Mock()  # 更新為新的清理方法
         mock_get_manager.return_value = mock_manager
         
         # 創建適配器
@@ -299,7 +299,7 @@ async def test_progress_adapter_integration():
         
         # 測試清理
         await adapter.cleanup()
-        mock_manager.cleanup_progress_message.assert_called_once()
+        mock_manager.cleanup_by_message_id.assert_called_once()
 
 
 def test_message_handler_should_process():

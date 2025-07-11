@@ -8,6 +8,7 @@ Discord 進度消息管理模組
 import discord
 import time
 import logging
+import asyncio
 from typing import Dict, Any, Optional, List
 from datetime import datetime
 
@@ -23,14 +24,19 @@ class ProgressManager:
     """Discord 進度消息管理器 (簡化版)"""
     
     def __init__(self):
-        # 追蹤每個頻道的進度消息 {channel_id: progress_message}
+        # 追蹤每個原始訊息的進度消息 {original_message_id: progress_message}
+        # 改用 message_id 作為主鍵，避免同頻道多訊息的 race condition
         self._progress_messages: Dict[int, discord.Message] = {}
         
         # 追蹤原始消息到進度消息的映射 {original_message_id: progress_message}
+        # 保持此欄位以維持向後相容性
         self._message_to_progress: Dict[int, discord.Message] = {}
         
         # 記錄消息創建時間
         self._message_timestamps: Dict[int, float] = {}
+        
+        # 異步鎖，保護共享資料結構的並發存取
+        self._lock = asyncio.Lock()
         
         self.logger = logging.getLogger(__name__)
     
@@ -53,53 +59,56 @@ class ProgressManager:
         Returns:
             Optional[discord.Message]: 進度消息或 None
         """
-        try:
-            channel_id = original_message.channel.id
-            
-            # 檢查是否已有進度消息
-            existing_progress_msg = self._progress_messages.get(channel_id)
-            
-            # 創建 embed 內容
-            embed_content = self._create_progress_embed(progress, final_answer, sources)
-            
-            if existing_progress_msg:
-                try:
-                    # 嘗試編輯現有進度消息
-                    if embed_content:
-                        await existing_progress_msg.edit(content=None, embed=embed_content)
-                    else:
-                        # 回退到純文字格式
-                        content = self._format_progress_content(progress, final_answer)
-                        await existing_progress_msg.edit(content=content, embed=None)
-                    return existing_progress_msg
-                except (discord.NotFound, discord.HTTPException, discord.Forbidden):
-                    # 如果編輯失敗，移除記錄並發送新消息
-                    self._progress_messages.pop(channel_id, None)
-            
-            # 發送新的進度消息
-            if embed_content:
-                progress_msg = await original_message.reply(
-                    embed=embed_content,
-                    silent=True
-                )
-            else:
-                # 回退到純文字格式
-                content = self._format_progress_content(progress, final_answer)
-                progress_msg = await original_message.reply(
-                    content=content,
-                    silent=True
-                )
-            
-            # 記錄新的進度消息
-            self._progress_messages[channel_id] = progress_msg
-            self._message_to_progress[original_message.id] = progress_msg
-            self._message_timestamps[original_message.id] = time.time()
-            
-            return progress_msg
-            
-        except discord.HTTPException as e:
-            self.logger.error(f"發送進度更新失敗: {e}")
-            return None
+        async with self._lock:  # 使用鎖保護所有共享資料的操作
+            try:
+                message_id = original_message.id
+                
+                # 檢查是否已有該訊息的進度消息
+                existing_progress_msg = self._progress_messages.get(message_id)
+                
+                # 創建 embed 內容
+                embed_content = self._create_progress_embed(progress, final_answer, sources)
+                
+                if existing_progress_msg:
+                    try:
+                        # 嘗試編輯現有進度消息
+                        if embed_content:
+                            await existing_progress_msg.edit(content=None, embed=embed_content)
+                        else:
+                            # 回退到純文字格式
+                            content = self._format_progress_content(progress, final_answer)
+                            await existing_progress_msg.edit(content=content, embed=None)
+                        return existing_progress_msg
+                    except (discord.NotFound, discord.HTTPException, discord.Forbidden):
+                        # 如果編輯失敗，移除記錄並發送新消息
+                        self._progress_messages.pop(message_id, None)
+                        self._message_to_progress.pop(message_id, None)
+                        self._message_timestamps.pop(message_id, None)
+                
+                # 發送新的進度消息
+                if embed_content:
+                    progress_msg = await original_message.reply(
+                        embed=embed_content,
+                        silent=True
+                    )
+                else:
+                    # 回退到純文字格式
+                    content = self._format_progress_content(progress, final_answer)
+                    progress_msg = await original_message.reply(
+                        content=content,
+                        silent=True
+                    )
+                
+                # 記錄新的進度消息（使用 message_id 作為主鍵）
+                self._progress_messages[message_id] = progress_msg
+                self._message_to_progress[message_id] = progress_msg
+                self._message_timestamps[message_id] = time.time()
+                
+                return progress_msg
+                
+            except discord.HTTPException as e:
+                self.logger.error(f"發送進度更新失敗: {e}")
+                return None
     
     def _create_progress_embed(
         self,
@@ -230,16 +239,30 @@ class ProgressManager:
             minutes = (seconds % 3600) // 60
             return f"{hours} 小時 {minutes} 分鐘"
     
-    def cleanup_progress_message(self, channel_id: int):
-        """清理特定頻道的進度消息記錄"""
-        self._progress_messages.pop(channel_id, None)
-        self.logger.debug(f"清理頻道 {channel_id} 的進度消息記錄")
-    
-    def cleanup_message_tracking(self, message_id: int):
-        """清理指定消息的追蹤記錄"""
+    def cleanup_by_message_id(self, message_id: int):
+        """根據訊息 ID 清理進度消息記錄（新的主要清理方法）"""
+        self._progress_messages.pop(message_id, None)
         self._message_to_progress.pop(message_id, None)
         self._message_timestamps.pop(message_id, None)
-        self.logger.debug(f"清理消息 {message_id} 的追蹤記錄")
+        self.logger.debug(f"清理訊息 {message_id} 的所有進度記錄")
+
+    def cleanup_progress_message(self, channel_id: int):
+        """清理特定頻道的進度消息記錄（保留以維持向後相容性）"""
+        # 改為清理該頻道所有相關的訊息
+        to_remove = []
+        for msg_id, progress_msg in self._progress_messages.items():
+            if progress_msg and hasattr(progress_msg, 'channel') and progress_msg.channel.id == channel_id:
+                to_remove.append(msg_id)
+        
+        for msg_id in to_remove:
+            self.cleanup_by_message_id(msg_id)
+        
+        self.logger.debug(f"清理頻道 {channel_id} 的 {len(to_remove)} 個進度消息記錄")
+    
+    def cleanup_message_tracking(self, message_id: int):
+        """清理指定消息的追蹤記錄（保留以維持向後相容性）"""
+        # 現在直接調用新的清理方法
+        self.cleanup_by_message_id(message_id)
     
     def cleanup_old_messages(self, max_age_seconds: int = 3600):
         """清理舊的消息記錄"""
@@ -250,7 +273,7 @@ class ProgressManager:
         ]
         
         for msg_id in expired_messages:
-            self.cleanup_message_tracking(msg_id)
+            self.cleanup_by_message_id(msg_id)
         
         if expired_messages:
             self.logger.info(f"清理了 {len(expired_messages)} 個過期的進度消息記錄")

@@ -160,21 +160,24 @@ class DiscordProgressAdapter(ProgressObserver):
         """處理串流完成"""
         async with self._update_lock:
             if self._streaming_content:
-                # 使用 progress_manager 發送最終的串流內容
-                completion_progress = DiscordProgressUpdate(
-                    stage="completed",
-                    message="✅ 回答完成",
-                    progress_percentage=100
-                )
-                
-                await self.progress_manager.send_or_update_progress(
-                    original_message=self.original_message,
-                    progress=completion_progress,
-                    final_answer=self._streaming_content
-                )
-                
-                # 清理串流狀態
-                self._streaming_message = None
+                try:
+                    # 使用 progress_manager 發送最終的串流內容
+                    completion_progress = DiscordProgressUpdate(
+                        stage="completed",
+                        message="✅ 回答完成",
+                        progress_percentage=100
+                    )
+                    
+                    await self.progress_manager.send_or_update_progress(
+                        original_message=self.original_message,
+                        progress=completion_progress,
+                        final_answer=self._streaming_content
+                    )
+                except Exception as e:
+                    self.logger.error(f"串流完成事件處理失敗: {e}")
+                finally:
+                    # 無論成功或失敗都清理串流狀態
+                    self._streaming_message = None
     
     async def _update_streaming_message(self):
         """更新串流訊息"""
@@ -333,10 +336,10 @@ class DiscordProgressAdapter(ProgressObserver):
     async def cleanup(self):
         """清理資源"""
         try:
-            # 清理進度管理器中的訊息
+            # 使用新的 cleanup_by_message_id 方法清理進度管理器中的訊息
             if hasattr(self, 'progress_manager') and self.progress_manager:
-                channel_id = self.original_message.channel.id
-                self.progress_manager.cleanup_progress_message(channel_id)
+                message_id = self.original_message.id
+                self.progress_manager.cleanup_by_message_id(message_id)
         except Exception as e:
             self.logger.warning(f"清理進度訊息失敗: {e}")
         

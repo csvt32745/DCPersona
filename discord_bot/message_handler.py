@@ -20,6 +20,7 @@ from schemas.config_types import AppConfig, DiscordContextData
 from utils.config_loader import load_typed_config
 from prompt_system.prompts import get_prompt_system
 from .progress_adapter import DiscordProgressAdapter
+from .progress_manager import get_progress_manager
 from .message_collector import collect_message, CollectedMessages
 from event_scheduler.scheduler import EventScheduler
 
@@ -171,6 +172,13 @@ class DiscordMessageHandler:
             # 清理進度適配器
             if 'progress_adapter' in locals():
                 await progress_adapter.cleanup()
+            
+            # 清理該訊息的進度管理記錄，防止記憶體洩漏
+            try:
+                progress_manager = get_progress_manager()
+                progress_manager.cleanup_by_message_id(original_message.id)
+            except Exception as cleanup_error:
+                self.logger.warning(f"清理進度管理記錄時發生錯誤: {cleanup_error}")
     
     async def cleanup(self):
         """清理資源，例如關閉 httpx 客戶端"""
