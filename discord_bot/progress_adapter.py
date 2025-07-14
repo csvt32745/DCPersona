@@ -14,6 +14,7 @@ from agent_core.progress_observer import ProgressObserver, ProgressEvent
 from schemas.agent_types import DiscordProgressUpdate, ResearchSource
 from .progress_manager import get_progress_manager
 from utils.config_loader import load_typed_config
+from prompt_system.emoji_handler import EmojiHandler
 
 
 class DiscordProgressAdapter(ProgressObserver):
@@ -23,14 +24,16 @@ class DiscordProgressAdapter(ProgressObserver):
     與現有的 progress_manager 系統整合。
     """
     
-    def __init__(self, original_message: discord.Message):
+    def __init__(self, original_message: discord.Message, emoji_handler: Optional[EmojiHandler] = None):
         """
         初始化 Discord 進度適配器
         
         Args:
             original_message: 觸發 Agent 處理的原始 Discord 訊息
+            emoji_handler: 可選的 emoji 處理器實例
         """
         self.original_message = original_message
+        self.emoji_handler = emoji_handler
         self.progress_manager = get_progress_manager()
         self.logger = logging.getLogger(__name__)
         self.config = load_typed_config()
@@ -168,10 +171,19 @@ class DiscordProgressAdapter(ProgressObserver):
                         progress_percentage=100
                     )
                     
+                    # 格式化 emoji 輸出
+                    formatted_content = self._streaming_content
+                    if self.emoji_handler:
+                        try:
+                            guild_id = self.original_message.guild.id if self.original_message.guild else None
+                            formatted_content = self.emoji_handler.format_emoji_output(self._streaming_content, guild_id)
+                        except Exception as e:
+                            self.logger.warning(f"格式化串流 emoji 失敗: {e}")
+                    
                     await self.progress_manager.send_or_update_progress(
                         original_message=self.original_message,
                         progress=completion_progress,
-                        final_answer=self._streaming_content
+                        final_answer=formatted_content
                     )
                 except Exception as e:
                     self.logger.error(f"串流完成事件處理失敗: {e}")
@@ -186,6 +198,14 @@ class DiscordProgressAdapter(ProgressObserver):
             display_content = self._streaming_content
             if len(display_content) > 1800:
                 display_content = display_content[:1800] + "..."
+            
+            # 格式化 emoji 輸出（串流模式）
+            if self.emoji_handler:
+                try:
+                    guild_id = self.original_message.guild.id if self.original_message.guild else None
+                    display_content = self.emoji_handler.format_emoji_output(display_content, guild_id)
+                except Exception as e:
+                    self.logger.warning(f"格式化串流 emoji 失敗: {e}")
             
             # 使用 progress_manager 更新串流進度
             streaming_progress = DiscordProgressUpdate(
@@ -251,11 +271,20 @@ class DiscordProgressAdapter(ProgressObserver):
                     for source in sources[:5]  # 限制最多5個來源
                 ]
             
+            # 格式化 emoji 輸出
+            formatted_result = final_result
+            if self.emoji_handler:
+                try:
+                    guild_id = self.original_message.guild.id if self.original_message.guild else None
+                    formatted_result = self.emoji_handler.format_emoji_output(final_result, guild_id)
+                except Exception as e:
+                    self.logger.warning(f"格式化 emoji 失敗: {e}")
+            
             # 發送完成更新
             await self.progress_manager.send_or_update_progress(
                 original_message=self.original_message,
                 progress=completion_progress,
-                final_answer=final_result,
+                final_answer=formatted_result,
                 sources=research_sources
             )
             

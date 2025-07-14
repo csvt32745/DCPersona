@@ -1,5 +1,6 @@
 .env
 config.yaml
+emoji_config.yaml
 data/events.json
 
 # Re-ignore __pycache__ directories and .pyc files

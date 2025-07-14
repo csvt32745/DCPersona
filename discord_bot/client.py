@@ -22,6 +22,7 @@ from event_scheduler.scheduler import EventScheduler
 # 導入 Wordle 相關功能
 from utils.wordle_service import get_wordle_service, WordleNotFound, WordleAPITimeout, WordleServiceError, safe_wordle_output
 from prompt_system.prompts import PromptSystem
+from prompt_system.emoji_handler import EmojiHandler
 from langchain_google_genai import ChatGoogleGenerativeAI
 from discord_bot.commands import register_commands
 
@@ -49,6 +50,7 @@ class DCPersonaBot(commands.Bot):
         # 初始化服務
         self.wordle_service = get_wordle_service()
         self.prompt_system = PromptSystem()
+        self.emoji_handler = EmojiHandler()
         
         # 初始化 LLM（用於生成 Wordle 提示）
         self._init_wordle_llm()
@@ -111,6 +113,15 @@ class DCPersonaBot(commands.Bot):
         
         # 設定 discord_client 到 message_handler
         self.message_handler.set_discord_client(self)
+        
+        # 載入 emoji 配置
+        try:
+            await self.emoji_handler.load_emojis(self)
+            stats = self.emoji_handler.get_stats()
+            self.logger.info(f"✅ Emoji 系統已載入: {stats['total_emojis']} 個 emoji "
+                           f"(應用程式: {stats['application_emojis']}, 伺服器: {stats['guild_emojis']})")
+        except Exception as e:
+            self.logger.error(f"❌ 載入 emoji 配置失敗: {e}")
         
         # 記錄配置資訊
         if self.config and self.config.agent:

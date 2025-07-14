@@ -19,6 +19,7 @@ from schemas.agent_types import OverallState, MsgNode, ReminderDetails, ToolExec
 from schemas.config_types import AppConfig, DiscordContextData
 from utils.config_loader import load_typed_config
 from prompt_system.prompts import get_prompt_system
+from prompt_system.emoji_handler import EmojiHandler
 from .progress_adapter import DiscordProgressAdapter
 from .progress_manager import get_progress_manager
 from .message_collector import collect_message, CollectedMessages
@@ -139,7 +140,10 @@ class DiscordMessageHandler:
             agent = create_unified_agent(self.config)
             
             # 創建並註冊 Discord 進度適配器
-            progress_adapter = DiscordProgressAdapter(original_message)
+            emoji_handler = None
+            if self.discord_client:
+                emoji_handler = self.discord_client.emoji_handler
+            progress_adapter = DiscordProgressAdapter(original_message, emoji_handler)
             agent.add_progress_observer(progress_adapter)
             
             # 準備初始狀態
@@ -242,12 +246,26 @@ class DiscordMessageHandler:
         # 格式化 Discord metadata，傳遞提醒觸發標誌和內容
         discord_metadata = self._format_discord_metadata(original_message, is_reminder_trigger, reminder_content)
         
+        # 加入 emoji 提示上下文
+        emoji_context = ""
+        if self.discord_client:
+            try:
+                guild_id = original_message.guild.id if original_message.guild else None
+                emoji_context = self.discord_client.emoji_handler.build_prompt_context(guild_id)
+            except Exception as e:
+                self.logger.warning(f"生成 emoji 提示上下文失敗: {e}")
+        
+        # 組合完整的 metadata
+        full_metadata = discord_metadata
+        if emoji_context:
+            full_metadata = f"{discord_metadata}\n\n{emoji_context}"
+        
         # 創建初始狀態，將 metadata 加入
         initial_state = OverallState(
             messages=messages,  # 直接使用已經是 MsgNode 格式的訊息
             tool_round=0,
             finished=False,
-            messages_global_metadata=discord_metadata
+            messages_global_metadata=full_metadata
         )
         
         # 清理提醒觸發資訊（避免記憶體洩漏）
