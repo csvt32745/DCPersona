@@ -70,6 +70,7 @@
 ### 🌐 多模態支援
 - **圖片理解**: 支援 Discord 圖片輸入和 Vision 模型，並將圖片內容轉換為 Base64 編碼以供 LLM 處理
 - **Emoji / Sticker / 動畫**: 內建 `image_processor` 模組，完整支援自定義 Emoji、Discord Sticker（PNG/APNG/GIF/WebP）與 GIF/APNG/WebP 動畫（含幀取樣）。
+- **智能 Emoji 輔助**: 配置驅動的 emoji 系統，根據伺服器上下文智能建議和格式化 emoji，支援 `[emoji:id]` 標記自動轉換為 Discord 格式
 - **Embed Media 支援**: 自動偵測 `embed._thumbnail` / `embed.image` 的外部圖片 URL，封裝為 VirtualAttachment 與附件流程統一。
 - **媒體統計與摘要**: `message_collector` 會統計 emoji/sticker/靜態/動畫圖片數量並於訊息末尾附加 `[包含: ...]` 標記，`MULTIMODAL_GUIDANCE` 提示詞協助 LLM 解讀。
 - **文件處理**: 自動處理文字附件
@@ -173,6 +174,7 @@ DCPersona/
 ├── main.py                  # Discord Bot 主程式入口
 ├── cli_main.py              # CLI 測試介面
 ├── config.yaml              # 型別安全配置檔
+├── emoji_config.yaml        # Emoji 系統配置檔
 ├── tools/                   # LangChain 工具定義
 │   ├── google_search.py     # Google 搜尋工具
 │   ├── youtube_summary.py   # YouTube 摘要工具
@@ -200,10 +202,12 @@ DCPersona/
 ├── schemas/                 # 型別安全架構
 │   ├── agent_types.py       # Agent 核心型別
 │   ├── config_types.py      # 配置型別定義
+│   ├── emoji_types.py       # Emoji 系統型別定義
 │   └── __init__.py
 │
 ├── prompt_system/           # 提示詞管理
 │   ├── prompts.py           # 核心提示詞功能
+│   ├── emoji_handler.py     # Emoji 處理器 (智能建議與格式化)
 │   └── tool_prompts/        # 工具提示詞模板
 │
 ├── utils/                   # 通用工具
@@ -216,6 +220,7 @@ DCPersona/
 │
 │
 └── tests/                   # 測試檔案
+    ├── test_emoji_system.py # Emoji 系統完整測試 (21 項測試)
     └── ...                  # 單元與整合測試
 ```
 
@@ -325,6 +330,19 @@ discord:
 - **自動驗證**: 啟動時檢查配置完整性
 - **控制**: 可配置的串流啟用和內容長度閾值
 - **進度管理**: 靈活的進度更新間隔和顯示模式
+- **型別安全配置**: 透過 `config.yaml` 管理系統核心配置，提供嚴格的型別檢查和自動驗證。
+- **Emoji 配置**: 專用的 `emoji_config.yaml` 管理所有應用程式和伺服器專屬的 Emoji，支援智能建議與格式化。
+    ```yaml
+    # 應用程式通用 Emojis
+    application:
+      1362820638489972937: "裝可愛，招牌表情"
+
+    # 伺服器專屬 Emojis  
+    730024186852147240:
+      791232834697953330: "好笑青蛙"
+      959699262587928586: "得意 =w= 烏龜"
+    ```
+     描述（例如：裝可愛，招牌表情）將會作為上下文資訊提供給 Agent，理解每個 emoji 的含義與適用情境
 
 ---
 
@@ -345,6 +363,7 @@ python -m pytest tests/test_phase2_progress.py -v
 - **整合測試**: Agent 端到端流程
 - **配置測試**: 型別安全配置載入
 - **串流測試**: 串流系統和進度管理功能
+- **Emoji 系統測試**: 完整的 emoji 配置、處理和整合測試 (21 項測試)
 
 ---
 

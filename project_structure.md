@@ -9,7 +9,8 @@ DCPersona/
 │
 ├── main.py                  # Discord Bot 主程式入口，初始化與啟動
 ├── cli_main.py              # CLI 測試介面，支援對話模式和配置調整
-├── config-example.yaml              # 系統設定檔（型別安全配置）
+├── config-example.yaml      # 系統設定檔（型別安全配置）
+├── emoji_config.yaml        # **[新增]** Emoji 系統配置檔（伺服器和應用程式 emoji）
 ├── personas/                # Agent 人格系統提示詞資料夾
 │
 ├── tools/                   # **[新增]** LangChain 工具定義
@@ -38,10 +39,12 @@ DCPersona/
 ├── schemas/                 # **[重要]** 型別安全資料架構
 │   ├── agent_types.py       # Agent 相關型別定義（狀態、計劃等）
 │   ├── config_types.py      # 完整的型別安全配置定義
+│   ├── emoji_types.py       # **[新增]** Emoji 系統型別定義（EmojiConfig）
 │   └── __init__.py
 │
 ├── prompt_system/           # 統一提示詞管理系統
 │   ├── prompts.py           # 核心提示詞功能與 PromptSystem
+│   ├── emoji_handler.py     # **[新增]** Emoji 處理器（智能建議與格式化）
 │   └── tool_prompts/        # 工具相關提示詞模板
 │
 ├── utils/                   # 通用工具與配置
@@ -54,6 +57,7 @@ DCPersona/
 │   └── __init__.py
 │
 └── tests/                   # 測試檔案
+    ├── test_emoji_system.py # **[新增]** Emoji 系統完整測試（21 項測試）
     └── ...                  # 各種單元測試與整合測試
 ```
 
@@ -330,6 +334,138 @@ progress:
   discord:
     update_interval: 2.0    # 進度更新間隔（秒）
     use_embeds: true        # 使用 Discord embed 格式
+```
+
+---
+
+## DCPersona Emoji 輔助系統
+
+### 系統概述
+DCPersona 包含一個智能 emoji 輔助系統，能夠根據伺服器上下文智能建議和格式化 emoji，為對話增添表達力和趣味性。
+
+### 核心特性
+- **配置驅動**: 通過 `emoji_config.yaml` 管理 emoji 配置
+- **型別安全**: 使用 `EmojiConfig` dataclass 確保配置正確性
+- **上下文感知**: 根據 Discord 伺服器智能選擇適當的 emoji
+- **自動格式化**: 將 `[emoji:id]` 標記轉換為 Discord emoji 格式
+- **異步載入**: Bot 啟動時異步驗證 emoji 可用性
+- **快速處理**: 訊息處理時同步格式化，保證響應速度
+
+### 架構組件
+
+#### `schemas/emoji_types.py` - 型別安全配置
+定義 Emoji 系統的資料結構：
+
+```python
+@dataclass
+class EmojiConfig:
+    application: Dict[int, str]  # 應用程式 emoji
+    guilds: Dict[int, Dict[int, str]]  # 伺服器特定 emoji
+    
+    @classmethod
+    def from_yaml(cls, config_path: str) -> 'EmojiConfig':
+        # 安全載入 YAML 並轉換 emoji ID 為 int
+```
+
+**主要功能**:
+- YAML 配置檔案載入
+- emoji ID 型別轉換和驗證
+- 配置錯誤容錯處理
+
+#### `prompt_system/emoji_handler.py` - 核心處理器
+實現 Emoji 系統的核心邏輯：
+
+```python
+class EmojiHandler:
+    async def load_emojis(self, client: discord.Client) -> None:
+        # 異步載入和驗證所有 emoji
+        
+    def build_prompt_context(self, guild_id: Optional[int] = None) -> str:
+        # 生成 LLM 提示上下文
+        
+    def format_emoji_output(self, text: str, guild_id: Optional[int] = None) -> str:
+        # 格式化 emoji 輸出
+```
+
+**主要功能**:
+- **異步 emoji 載入**: Bot 啟動時驗證所有配置中的 emoji 是否可用
+- **智能上下文生成**: 根據伺服器 ID 生成包含可用 emoji 的 LLM 提示
+- **自動格式化**: 將 `[emoji:123456789]` 轉換為 `<:emoji_name:123456789>`
+- **優先級處理**: 伺服器 emoji 優先於應用程式 emoji
+- **統計資訊**: 提供 emoji 載入統計和診斷資訊
+
+#### `emoji_config.yaml` - 配置文件
+管理 emoji 的配置：
+
+```yaml
+# 應用程式通用 Emojis
+application:
+  1362820638489972937: "裝可愛，招牌表情"
+
+# 伺服器專屬 Emojis  
+730024186852147240:
+  791232834697953330: "好笑青蛙"
+  959699262587928586: "得意 =w= 烏龜"
+```
+
+### 整合流程
+
+#### 1. Bot 啟動流程
+```python
+# discord_bot/client.py
+class DCPersonaBot:
+    async def on_ready(self):
+        await self.emoji_handler.load_emojis(self)
+        stats = self.emoji_handler.get_stats()
+        # 記錄載入統計
+```
+
+#### 2. 訊息處理流程
+```python
+# discord_bot/message_handler.py
+def _prepare_agent_state(self, collected_messages, original_message):
+    guild_id = original_message.guild.id if original_message.guild else None
+    emoji_context = self.discord_client.emoji_handler.build_prompt_context(guild_id)
+    # 將 emoji 上下文加入 Agent 狀態
+```
+
+#### 3. 輸出格式化流程
+```python
+# discord_bot/progress_adapter.py
+async def on_completion(self, final_result: str, sources: Optional[List[Dict]] = None):
+    if self.emoji_handler:
+        guild_id = self.original_message.guild.id if self.original_message.guild else None
+        formatted_result = self.emoji_handler.format_emoji_output(final_result, guild_id)
+```
+
+### 測試覆蓋
+`tests/test_emoji_system.py` 包含 21 項綜合測試：
+
+- **EmojiConfig 測試**: YAML 載入、錯誤處理、型別轉換
+- **EmojiHandler 測試**: emoji 載入、上下文生成、格式化功能  
+- **整合測試**: Discord 進度適配器整合、串流支援
+- **真實場景測試**: 使用真實 emoji 配置的端到端測試
+
+### 使用範例
+
+#### LLM 提示上下文
+```text
+Emoji 使用說明：
+**可用的應用程式 Emoji:**
+- [emoji:1362820638489972937] - 裝可愛，招牌表情
+
+**當前伺服器可用的 Emoji:**
+- [emoji:791232834697953330] - 好笑青蛙
+- [emoji:959699262587928586] - 得意 =w= 烏龜
+
+請在回應中適當使用這些 emoji 來增加表達的生動性。
+使用格式：[emoji:emoji_id]
+```
+
+#### 自動格式化
+```text
+輸入: "這真是太棒了 [emoji:1362820638489972937]！"
+輸出: "這真是太棒了 <:kawaii:1362820638489972937>！"
 ```
 
 ---
