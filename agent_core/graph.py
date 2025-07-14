@@ -268,11 +268,13 @@ class UnifiedAgent(ProgressMixin):
                     # 將 combined_tool_calls 存儲在 state 中供後續節點使用
                     state.metadata = state.metadata or {}
                     state.metadata["pending_tool_calls"] = combined_tool_calls
-                    if ai_message.content:
-                        state.messages.append(MsgNode(
-                            role="assistant",
-                            content=ai_message.content,
-                        ))
+                    
+                    # 保存 AI 訊息和工具調用到對話歷史
+                    state.messages.append(MsgNode(
+                        role="assistant",
+                        content=ai_message.content or "",
+                        metadata={"tool_calls": combined_tool_calls}
+                    ))
                 else:
                     # 沒有工具調用，直接回答
                     agent_plan = AgentPlan(
@@ -705,11 +707,25 @@ class UnifiedAgent(ProgressMixin):
                 if msg.role == "user":
                     messages_for_llm.append(HumanMessage(content=msg.content))
                 elif msg.role == "assistant":
-                    messages_for_llm.append(AIMessage(content=msg.content))
+                    # 檢查是否有 tool_calls
+                    tool_calls = msg.metadata.get("tool_calls") if msg.metadata else None
+                    if tool_calls:
+                        ai_msg = AIMessage(content=msg.content, tool_calls=tool_calls)
+                    else:
+                        ai_msg = AIMessage(content=msg.content)
+                    messages_for_llm.append(ai_msg)
                 elif msg.role == "tool":
-                    messages_for_llm.append(HumanMessage(content="Tool Result: " + msg.content))
-                    # messages_for_llm.append(ToolMessage(content=msg.content, tool_call_id=str(msg.metadata.get("tool_call_id"))))
-            
+                    # 使用正確的 ToolMessage 格式
+                    tool_call_id = msg.metadata.get("tool_call_id") if msg.metadata else None
+                    if tool_call_id:
+                        messages_for_llm.append(ToolMessage(
+                            content=msg.content,
+                            tool_call_id=str(tool_call_id)
+                        ))
+                    else:
+                        # 如果沒有 tool_call_id，記錄錯誤但不中斷
+                        self.logger.warning(f"Tool message without tool_call_id: {msg.content}")
+                        messages_for_llm.append(HumanMessage(content="Tool Result: " + msg.content))
             
             return messages_for_llm
             
