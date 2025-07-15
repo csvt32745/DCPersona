@@ -12,6 +12,7 @@ from base64 import b64encode
 from typing import Dict, Any, Set, List, Optional, Union, Iterator, Tuple
 from dataclasses import dataclass, field
 from datetime import datetime
+from collections import OrderedDict
 
 from schemas.agent_types import MsgNode
 from schemas.config_types import EmojiStickerConfig
@@ -224,7 +225,7 @@ async def collect_message(
     
     # 處理訊息鏈
     msg_count = 0
-    all_processed_messages_map: Dict[int, ProcessedMessage] = {} # 用於去重複
+    all_processed_messages_map: OrderedDict[int, ProcessedMessage] = OrderedDict() # 用於去重複
     
     # 這裡的邏輯需要調整，因為我們現在要從 history_msgs 和 curr_msg 中收集所有相關訊息
     # 並在之後統一處理去重複和排序
@@ -258,7 +259,7 @@ async def collect_message(
             break
             
     # 將歷史訊息也加入待處理的集合中
-    for hist_msg in history_msgs:
+    for hist_msg in history_msgs[::-1]:
         if hist_msg.id not in all_processed_messages_map:
             try:
                 processed_msg = await _process_single_message(
@@ -269,7 +270,7 @@ async def collect_message(
                     httpx_client,
                     emoji_sticker_config
                 )
-                if processed_msg:
+                if processed_msg and processed_msg.message_id not in all_processed_messages_map:
                     all_processed_messages_map[processed_msg.message_id] = processed_msg
                     _check_limits_and_add_warnings(hist_msg, max_text, max_images, user_warnings)
             except Exception as e:
@@ -277,10 +278,11 @@ async def collect_message(
 
     # 對所有處理過的訊息進行去重複和排序
     # 去重複已經在 all_processed_messages_map 中完成
-    processed_messages = sorted(
-        all_processed_messages_map.values(), 
-        key=lambda p_msg: p_msg.created_at or datetime.min # 使用 created_at 排序，如果為 None 則排在最前面
-    )
+    processed_messages = list(all_processed_messages_map.values())[::-1]
+    # processed_messages = sorted(
+    #     all_processed_messages_map.values(), 
+    #     key=lambda p_msg: p_msg.created_at or datetime.min # 使用 created_at 排序，如果為 None 則排在最前面
+    # )
     
     # 重新計算實際使用的圖片數量
     actual_img_count = 0
