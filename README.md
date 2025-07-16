@@ -330,7 +330,19 @@ discord:
 - **型別安全**: 使用 dataclass 而非字典存取
 - **自動驗證**: 啟動時檢查配置完整性
 - **控制**: 可配置的串流啟用和內容長度閾值
-- **進度管理**: 靈活的進度更新間隔和顯示模式
+- **進度管理**: 靈活的進度更新間隔和顯示模式，並可在 `progress.discord.messages` 透過對應 `ProgressStage` key 來自訂文字/emoji（含新加入的 `tool_status` 階段）
+
+   **範例**：
+
+   ```yaml
+   progress:
+     discord:
+       messages:
+         starting: "🔄 正在處理您的訊息..."
+         searching: "🔍 正在搜尋資料..."
+         tool_status: "🔧 正在平行執行工具..."  # 新增，可在此自訂
+   ```
+
 - **型別安全配置**: 透過 `config.yaml` 管理系統核心配置，提供嚴格的型別檢查和自動驗證。
 - **Emoji 配置**: 專用的 `emoji_config.yaml` 管理所有應用程式和伺服器專屬的 Emoji，支援智能建議與格式化。
     ```yaml

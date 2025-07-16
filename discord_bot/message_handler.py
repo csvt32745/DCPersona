@@ -15,6 +15,8 @@ from datetime import datetime
 from dataclasses import asdict
 
 from agent_core.graph import create_unified_agent
+from agent_core.progress_observer import ProgressEvent
+from agent_core.progress_types import ProgressStage
 from schemas.agent_types import OverallState, MsgNode, ReminderDetails, ToolExecutionResult
 from schemas.config_types import AppConfig, DiscordContextData
 from utils.config_loader import load_typed_config
@@ -100,10 +102,9 @@ class DiscordMessageHandler:
             progress_adapter = DiscordProgressAdapter(message, emoji_handler)
             
             # 發送初始進度狀態
-            from agent_core.progress_observer import ProgressEvent
             await progress_adapter.on_progress_update(ProgressEvent(
-                stage="starting",
-                message="🔄 正在處理您的訊息...",
+                stage=ProgressStage.STARTING,
+                message="",  # 使用空訊息，讓 adapter 從配置載入
                 progress_percentage=10
             ))
             

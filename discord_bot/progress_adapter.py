@@ -11,6 +11,7 @@ import asyncio
 import discord
 
 from agent_core.progress_observer import ProgressObserver, ProgressEvent
+from agent_core.progress_types import ProgressStage, ToolStatus, TOOL_STATUS_SYMBOLS
 from schemas.agent_types import DiscordProgressUpdate, ResearchSource
 from .progress_manager import get_progress_manager
 from utils.config_loader import load_typed_config
@@ -49,8 +50,8 @@ class DiscordProgressAdapter(ProgressObserver):
         self._tool_state_lock = asyncio.Lock()   # <--- 新增
 
         # Phase3: 工具清單進度追蹤
-        # tool_name -> status (pending|running|completed|error)
-        self.tool_states: Dict[str, str] = {}
+        # tool_name -> status (使用 ToolStatus enum)
+        self.tool_states: Dict[str, ToolStatus] = {}
         self._last_tool_update = 0.0  # 最後一次工具進度渲染時間
         
     async def on_progress_update(self, event: ProgressEvent) -> None:
@@ -72,16 +73,17 @@ class DiscordProgressAdapter(ProgressObserver):
                 return
             
             # 特殊處理 Phase3 工具進度事件
-            if event.stage == "tool_list":
+            if event.stage == ProgressStage.TOOL_LIST:
                 async with self._tool_state_lock:
                     todo_tools = event.metadata.get("todo", []) if event.metadata else []
-                    self.tool_states = {tool: "pending" for tool in todo_tools}
+                    self.tool_states = {tool: ToolStatus.PENDING for tool in todo_tools}
 
-            if event.stage == "tool_status":
+            if event.stage == ProgressStage.TOOL_STATUS:
                 tool_name = event.metadata.get("tool") if event.metadata else None
                 status = event.metadata.get("status") if event.metadata else None
                 if tool_name and status:
                     async with self._tool_state_lock:
+                        # 直接使用 ToolStatus enum
                         self.tool_states[tool_name] = status
 
             # 如果正在串流，則不顯示一般進度更新
@@ -93,10 +95,16 @@ class DiscordProgressAdapter(ProgressObserver):
             async with self._tool_state_lock:
                 tool_list_str = self._compose_tool_list_str()
 
+            # 檢查是否有自訂訊息，如果沒有則從配置載入
+            message = event.message
+            if not message:
+                # 從配置載入訊息
+                message = self.config.progress.discord.messages.get(event.stage.value, event.stage.value)
+
             # 轉換為 Discord 進度更新格式
             discord_progress = DiscordProgressUpdate(
                 stage=event.stage,
-                message=event.message,
+                message=message,
                 progress_percentage=event.progress_percentage,
                 eta_seconds=event.eta_seconds,
                 details=tool_list_str if tool_list_str else None
@@ -123,15 +131,8 @@ class DiscordProgressAdapter(ProgressObserver):
         if not self.tool_states:
             return ""
 
-        symbols = {
-            "pending": "⚪",      # 未開始
-            "running": "🔄",     # 執行中
-            "completed": "✅",   # 完成
-            "error": "❌"        # 失敗
-        }
-
-        # 直接以 dict 插入順序產生無序列表
-        lines = [f"• {symbols.get(status, '⚪')} {tool}" for tool, status in self.tool_states.items()]
+        # 直接以 dict 插入順序產生無序列表，使用 TOOL_STATUS_SYMBOLS 映射
+        lines = [f"• {TOOL_STATUS_SYMBOLS.get(status, '⚪')} {tool}" for tool, status in self.tool_states.items()]
         content = "\n".join(lines)
         return f"🛠️ 工具進度\n{content}"
     

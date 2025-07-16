@@ -23,6 +23,7 @@ from google.genai import Client
 
 from schemas.agent_types import OverallState, MsgNode, ToolPlan, AgentPlan, ToolExecutionState, ReminderDetails, ToolExecutionResult
 from utils.config_loader import load_typed_config
+from .progress_types import ProgressStage, ToolStatus
 from prompt_system.prompts import get_current_date, PromptSystem
 from schemas.config_types import AppConfig
 from .progress_mixin import ProgressMixin
@@ -199,8 +200,9 @@ class UnifiedAgent(ProgressMixin):
             
             # 通知開始階段
             await self._notify_progress(
-                stage="generate_query", 
-                message="🤔 正在分析您的問題..."
+                stage=ProgressStage.GENERATE_QUERY, 
+                message="",
+                progress_percentage=30,
             )
             
             user_content = _extract_text_content(state.messages[-1].content)
@@ -333,7 +335,7 @@ class UnifiedAgent(ProgressMixin):
             # Phase3: 先通知工具清單 (todo list)
             try:
                 await self._notify_progress(
-                    stage="tool_list",
+                    stage=ProgressStage.TOOL_LIST,
                     message="🛠️ 工具進度",
                     todo=[tc["name"] for tc in pending_tool_calls]
                 )
@@ -342,8 +344,8 @@ class UnifiedAgent(ProgressMixin):
 
             # 通知工具執行階段
             await self._notify_progress(
-                stage="tool_execution",
-                message="🔧 正在平行執行工具...",
+                stage=ProgressStage.TOOL_EXECUTION,
+                message="",  # 使用配置中的訊息
                 progress_percentage=50
             )
             
@@ -423,11 +425,11 @@ class UnifiedAgent(ProgressMixin):
         # Phase3: 工具狀態 - running
         try:
             await self._notify_progress(
-                stage="tool_status",
-                message="🔧 正在平行執行工具...",  # 保持原本的進度訊息
+                stage=ProgressStage.TOOL_STATUS,
+                message="",  # 使用配置訊息
                 progress_percentage=50,  # 保持進度條
                 tool=tool_name,
-                status="running"
+                status=ToolStatus.RUNNING
             )
         except Exception as e:
             self.logger.warning(f"通知工具 {tool_name} 執行中 狀態失敗: {e}")
@@ -447,11 +449,11 @@ class UnifiedAgent(ProgressMixin):
                 # Phase3: 工具狀態 - error
                 try:
                     await self._notify_progress(
-                        stage="tool_status",
-                        message="🔧 正在平行執行工具...",  # 保持原本的進度訊息
+                        stage=ProgressStage.TOOL_STATUS,
+                        message="",  # 使用配置訊息
                         progress_percentage=50,  # 保持進度條
                         tool=tool_name,
-                        status="error"
+                        status=ToolStatus.ERROR
                     )
                 except Exception as ne:
                     self.logger.warning(f"通知工具 {tool_name} error 狀態失敗: {ne}")
@@ -493,11 +495,11 @@ class UnifiedAgent(ProgressMixin):
             # Phase3: 工具狀態 - completed
             try:
                 await self._notify_progress(
-                    stage="tool_status",
-                    message="🔧 正在平行執行工具...",  # 保持原本的進度訊息
+                    stage=ProgressStage.TOOL_STATUS,
+                    message="",  # 使用配置訊息
                     progress_percentage=50,  # 保持進度條
                     tool=tool_name,
-                    status="completed"
+                    status=ToolStatus.COMPLETED
                 )
             except Exception as ce:
                 self.logger.warning(f"通知工具 {tool_name} completed 狀態失敗: {ce}")
@@ -517,11 +519,11 @@ class UnifiedAgent(ProgressMixin):
             # Phase3: 工具狀態 - error
             try:
                 await self._notify_progress(
-                    stage="tool_status",
-                    message="🔧 正在平行執行工具...",  # 保持原本的進度訊息
+                    stage=ProgressStage.TOOL_STATUS,
+                    message="",  # 使用配置訊息
                     progress_percentage=50,  # 保持進度條
                     tool=tool_name,
-                    status="error"
+                    status=ToolStatus.ERROR
                 )
             except Exception as ne:
                 self.logger.warning(f"通知工具 {tool_name} error 狀態失敗: {ne}")
@@ -581,8 +583,8 @@ class UnifiedAgent(ProgressMixin):
             
             # 通知反思階段
             await self._notify_progress(
-                stage="reflection",
-                message="🤔 正在評估搜尋結果的品質...",
+                stage=ProgressStage.REFLECTION,
+                message="",  # 使用配置中的訊息
                 progress_percentage=75
             )
             
@@ -754,14 +756,14 @@ class UnifiedAgent(ProgressMixin):
                 
                 # 通知完成
                 await self._notify_progress(
-                    stage="completed",
+                    stage=ProgressStage.COMPLETED,
                     message="✅ 提醒設定完成！",
                     progress_percentage=90
                 )
             
             await self._notify_progress(
-                stage="finalize_answer",
-                message="✍️ 正在整理答案...",
+                stage=ProgressStage.FINALIZE_ANSWER,
+                message="",  # 使用配置中的訊息
                 progress_percentage=90
             )
             
@@ -821,7 +823,7 @@ class UnifiedAgent(ProgressMixin):
                 
                 # 通知完成（非串流模式）
                 await self._notify_progress(
-                    stage="completed",
+                    stage=ProgressStage.COMPLETED,
                     message="✅ 回答完成！",
                     progress_percentage=100
                 )

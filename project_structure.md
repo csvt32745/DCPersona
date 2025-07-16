@@ -34,11 +34,13 @@ DCPersona/
 │   ├── graph.py             # LangGraph 構建與 Agent 節點實現
 │   ├── agent_utils.py       # Agent 核心輔助函式
 │   ├── progress_observer.py # 進度觀察者介面（支援串流）
+│   ├── progress_types.py    # ProgressStage / ToolStatus 枚舉與符號映射，提供型別安全的進度階段
 │   └── progress_mixin.py    # 進度更新混入（整合串流功能）
 │
 ├── schemas/                 # **[重要]** 型別安全資料架構
 │   ├── agent_types.py       # Agent 相關型別定義（狀態、計劃等）
 │   ├── config_types.py      # 完整的型別安全配置定義
+│   ├── progress_types.py    # ProgressStage / ToolStatus 枚舉與符號映射，提供型別安全的進度階段
 │   ├── emoji_types.py       # **[新增]** Emoji 系統型別定義（EmojiConfig）
 │   └── __init__.py
 │
@@ -296,7 +298,8 @@ flowchart TD
 - `AgentPlan`: Agent 執行計劃
 - `ToolPlan`: 個別工具執行計劃
 
----
+#### `progress_types.py` - 進度型別定義
+定義了 Agent 執行過程中的各種進度階段 (ProgressStage) 和工具狀態 (ToolStatus) 的枚舉類型，並提供對應的符號映射 (TOOL_STATUS_SYMBOLS)。這些枚舉確保了進度更新的型別安全與一致性。
 
 ## 多模態支援實現
 

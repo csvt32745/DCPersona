@@ -13,6 +13,8 @@ from typing import Dict, Any, Optional, List
 from datetime import datetime
 
 from schemas.agent_types import DiscordProgressUpdate, ResearchSource
+from agent_core.progress_types import ProgressStage
+from utils.config_loader import load_typed_config
 
 # 常數
 EMBED_COLOR_COMPLETE = discord.Color.dark_green()
@@ -39,6 +41,9 @@ class ProgressManager:
         self._lock = asyncio.Lock()
         
         self.logger = logging.getLogger(__name__)
+        
+        # 載入配置
+        self.config = load_typed_config()
     
     async def send_or_update_progress(
         self,
@@ -119,16 +124,16 @@ class ProgressManager:
         """創建進度 embed"""
         try:
             # 決定顏色
-            if progress.stage == "completed":
+            if progress.stage == ProgressStage.COMPLETED:
                 color = EMBED_COLOR_COMPLETE
-            elif progress.stage in ["error", "timeout"]:
+            elif progress.stage in [ProgressStage.ERROR, ProgressStage.TIMEOUT]:
                 color = EMBED_COLOR_ERROR
             else:
                 color = EMBED_COLOR_INCOMPLETE
             
             embed = discord.Embed(color=color)
             
-            if progress.stage == "completed" and final_answer:
+            if progress.stage == ProgressStage.COMPLETED and final_answer:
                 # 完成狀態：顯示最終答案
                 embed.description = final_answer[:4096]  # Discord embed 描述限制
                 
@@ -141,13 +146,16 @@ class ProgressManager:
                             value=sources_text,
                             inline=False
                         )
-            elif progress.stage == "streaming" and final_answer:
+            elif progress.stage == ProgressStage.STREAMING and final_answer:
                 # 串流狀態：顯示串流內容
                 embed.description = final_answer[:4096]  # Discord embed 描述限制
                 embed.set_footer(text="🔄 正在回答...")
             else:
-                # 進度狀態：顯示進度訊息
-                embed.description = progress.message
+                # 進度狀態：顯示進度訊息，優先使用 progress.message，否則從配置載入
+                message = progress.message
+                if not message:
+                    message = self.config.progress.discord.messages.get(progress.stage.value, progress.stage.value)
+                embed.description = message
                 
                 # 添加進度條
                 if progress.progress_percentage is not None:
@@ -198,22 +206,15 @@ class ProgressManager:
         final_answer: Optional[str] = None
     ) -> str:
         """格式化純文字進度內容"""
-        if progress.stage == "completed" and final_answer:
+        if progress.stage == ProgressStage.COMPLETED and final_answer:
             return f"✅ **完成**\n\n{final_answer}"
         
-        emoji_map = {
-            "starting": "🚀",
-            "searching": "🔍",
-            "analyzing": "🧠",
-            "completing": "⏳",
-            "completed": "✅",
-            "streaming": "🔄",
-            "error": "❌",
-            "timeout": "⏰"
-        }
+        # 優先使用 progress.message，如果為空則從配置載入
+        message = progress.message
+        if not message:
+            message = self.config.progress.discord.messages.get(progress.stage.value, progress.stage.value)
         
-        emoji = emoji_map.get(progress.stage, "🔄")
-        content = f"{emoji} **{progress.message}**"
+        content = f"**{message}**"
         
         if progress.progress_percentage is not None:
             progress_bar = self._create_progress_bar(progress.progress_percentage)

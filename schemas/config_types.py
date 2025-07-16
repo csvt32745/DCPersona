@@ -13,6 +13,30 @@ import os
 from dotenv import load_dotenv
 
 
+def _default_progress_messages() -> Dict[str, str]:
+    """預設進度訊息映射
+    
+    返回預設的進度階段到訊息的映射
+    """
+    # 延遲導入避免循環依賴
+    from agent_core.progress_types import ProgressStage
+    return {
+        ProgressStage.STARTING.value: "🔄 正在處理您的訊息...",
+        ProgressStage.GENERATE_QUERY.value: "🤔 正在分析您的問題...",
+        ProgressStage.SEARCHING.value: "🔍 正在搜尋資料...",
+        ProgressStage.ANALYZING.value: "🧠 正在分析資訊...",
+        ProgressStage.COMPLETING.value: "⏳ 正在整理答案...",
+        ProgressStage.STREAMING.value: "🔄 正在回答...",
+        ProgressStage.COMPLETED.value: "✅ 研究完成！正在準備回答...",
+        ProgressStage.ERROR.value: "❌ 處理時發生錯誤",
+        ProgressStage.TIMEOUT.value: "⏰ 處理逾時",
+        ProgressStage.TOOL_EXECUTION.value: "🛠️ 正在執行工具...",
+        ProgressStage.TOOL_STATUS.value: "🔧 正在平行執行工具...",  # 新增工具狀態預設訊息
+        ProgressStage.REFLECTION.value: "🤔 正在反思結果...",
+        ProgressStage.FINALIZE_ANSWER.value: "✍️ 正在整理答案...",
+    }
+
+
 @dataclass
 class ToolConfig:
     """工具配置"""
@@ -182,6 +206,7 @@ class ProgressDiscordConfig:
     cleanup_delay: int = 30   # 完成後清理延遲
     show_percentage: bool = True
     show_eta: bool = False
+    messages: Dict[str, str] = field(default_factory=lambda: _default_progress_messages())
 
 
 @dataclass
@@ -339,6 +364,44 @@ class AppConfig:
         if isinstance(discord_config, dict):
             if not discord_config.get("bot_token"):
                 logging.warning("未設置 Discord bot_token，Discord 功能將無法使用")
+        
+        # 驗證進度訊息配置的 key
+        progress_config = data.get("progress", {})
+        if isinstance(progress_config, dict):
+            discord_progress = progress_config.get("discord", {})
+            if isinstance(discord_progress, dict):
+                messages_config = discord_progress.get("messages", {})
+                if isinstance(messages_config, dict):
+                    AppConfig._validate_progress_message_keys(messages_config)
+    
+    @staticmethod
+    def _validate_progress_message_keys(messages_config: Dict[str, str]) -> None:
+        """驗證進度訊息配置的 key 是否有效
+        
+        Args:
+            messages_config: 進度訊息配置字典
+        """
+        try:
+            from agent_core.progress_types import ProgressStage
+            
+            # 獲取所有有效的 ProgressStage 值
+            valid_keys = {stage.value for stage in ProgressStage}
+            
+            # 檢查配置中的 key
+            invalid_keys = []
+            for key in messages_config.keys():
+                if key not in valid_keys:
+                    invalid_keys.append(key)
+            
+            # 如果有無效的 key，記錄警告
+            if invalid_keys:
+                logging.warning(f"進度訊息配置中發現無效的 key: {invalid_keys}")
+                logging.warning(f"有效的 ProgressStage key: {sorted(valid_keys)}")
+                # 不拋出異常，只記錄警告，讓配置可以繼續載入
+        
+        except ImportError:
+            # 如果無法導入 ProgressStage，記錄警告但不驗證
+            logging.warning("無法導入 ProgressStage 進行 key 驗證")
     
     @classmethod
     def _dict_to_dataclass(cls, data: Dict[str, Any], dataclass_type):
@@ -414,6 +477,9 @@ class AppConfig:
         Returns:
             AppConfig: 配置實例
         """
+        # 驗證配置
+        cls._validate_config(data)
+        
         return cls._dict_to_dataclass(data, cls)
     
     def to_dict(self) -> Dict[str, Any]:

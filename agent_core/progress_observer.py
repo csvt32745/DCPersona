@@ -6,7 +6,10 @@
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from typing import Dict, Any, Optional, List
+from typing import Dict, Any, Optional, List, Union, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from .progress_types import ProgressStage
 
 
 @dataclass
@@ -15,7 +18,7 @@ class ProgressEvent:
     
     用於在 Agent 執行過程中傳遞進度資訊給外部系統
     """
-    stage: str  # 進度階段 (generate_query, execute_tool, reflection, etc.)
+    stage: 'ProgressStage'  # 進度階段
     message: str  # 進度描述訊息
     progress_percentage: Optional[int] = None  # 進度百分比 (0-100)
     eta_seconds: Optional[int] = None  # 預估剩餘時間（秒）

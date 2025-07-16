@@ -1,6 +1,9 @@
 from dataclasses import dataclass, field
-from typing import List, Dict, Any, Optional, Annotated, Union
+from typing import List, Dict, Any, Optional, Annotated, Union, TYPE_CHECKING
 import operator
+
+if TYPE_CHECKING:
+    from agent_core.progress_types import ProgressStage
 
 
 @dataclass
@@ -101,7 +104,7 @@ class ToolExecutionState:
 @dataclass
 class DiscordProgressUpdate:
     """Discord 進度更新結構"""
-    stage: str  # 當前階段
+    stage: 'ProgressStage'  # 當前階段
     message: str  # 進度訊息
     progress_percentage: Optional[int] = None  # 進度百分比 (0-100)
     eta_seconds: Optional[int] = None  # 預估剩餘時間（秒）

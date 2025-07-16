@@ -33,6 +33,7 @@ DCPersona/
 │   ├── graph.py             # LangGraph 構建與 Agent 節點實現
 │   ├── agent_utils.py       # Agent 核心輔助函式
 │   ├── progress_observer.py # 進度觀察者介面（支援串流）
+│   ├── progress_types.py    # ProgressStage / ToolStatus 枚舉與符號映射
 │   └── progress_mixin.py    # 進度更新混入（整合串流功能）
 │
 ├── schemas/                 # 型別安全資料架構
@@ -66,6 +67,7 @@ DCPersona/
 
 1.  **`agent_core/` - 統一 Agent 引擎**:
     *   `graph.py`: LangGraph 核心實現，包含 `UnifiedAgent` 及其各階段節點（計劃生成、工具執行、反思、最終答案生成）。
+    *   `progress_types.py`: 定義 `ProgressStage`、`ToolStatus` 枚舉與 `TOOL_STATUS_SYMBOLS`，提供型別安全且可配置的進度階段。
     *   `progress_mixin.py` & `progress_observer.py`: 實現觀察者模式的進度通知系統，支援解耦設計、多觀察者、完整串流支援和統一介面。
 
 2.  **`tools/` - LangChain 工具定義**:
