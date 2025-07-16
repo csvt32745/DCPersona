@@ -127,6 +127,7 @@ class TestEndToEndFlow:
             
             # 設置進度適配器模擬
             mock_adapter_instance = Mock()
+            mock_adapter_instance.on_progress_update = AsyncMock()  # 🔥 新增：支援 on_progress_update
             mock_adapter_instance.on_completion = AsyncMock()
             mock_adapter_instance.cleanup = AsyncMock()
             mock_adapter_instance.on_error = AsyncMock()
@@ -221,6 +222,7 @@ class TestEndToEndFlow:
             
             # 設置進度適配器模擬
             mock_adapter_instance = Mock()
+            mock_adapter_instance.on_progress_update = AsyncMock()  # 🔥 新增：支援 on_progress_update
             mock_adapter_instance.on_completion = AsyncMock()
             mock_adapter_instance.cleanup = AsyncMock()
             mock_adapter_instance.on_error = AsyncMock()

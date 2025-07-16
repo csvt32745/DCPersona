@@ -93,6 +93,20 @@ class DiscordMessageHandler:
             
             self.logger.info(f"開始處理訊息: {message.content[:100]}...")
             
+            # 🔥 新增：提早創建 progress adapter 並發送初始狀態
+            emoji_handler = None
+            if self.discord_client:
+                emoji_handler = self.discord_client.emoji_handler
+            progress_adapter = DiscordProgressAdapter(message, emoji_handler)
+            
+            # 發送初始進度狀態
+            from agent_core.progress_observer import ProgressEvent
+            await progress_adapter.on_progress_update(ProgressEvent(
+                stage="starting",
+                message="🔄 正在處理您的訊息...",
+                progress_percentage=10
+            ))
+            
             # 收集訊息歷史和上下文 - 使用型別安全存取
             collected_messages = await collect_message(
                 new_msg=message,
@@ -105,8 +119,8 @@ class DiscordMessageHandler:
                 emoji_sticker_config=self.config.discord.emoji_sticker
             )
             
-            # 使用統一 Agent 進行處理
-            success = await self._process_with_unified_agent(message, collected_messages)
+            # 使用統一 Agent 進行處理，傳遞預先創建的 progress_adapter
+            success = await self._process_with_unified_agent(message, collected_messages, progress_adapter)
             
             return success
             
@@ -124,13 +138,15 @@ class DiscordMessageHandler:
     async def _process_with_unified_agent(
         self, 
         original_message: discord.Message, 
-        collected_messages: CollectedMessages
+        collected_messages: CollectedMessages,
+        progress_adapter: Optional[DiscordProgressAdapter] = None
     ) -> bool:
         """使用統一 Agent 處理訊息
         
         Args:
             original_message: 原始 Discord 訊息
             collected_messages: 收集到的訊息歷史和上下文
+            progress_adapter: 預先創建的進度適配器（可選）
             
         Returns:
             bool: 是否成功處理
@@ -139,11 +155,13 @@ class DiscordMessageHandler:
             # 創建 Agent 實例
             agent = create_unified_agent(self.config)
             
-            # 創建並註冊 Discord 進度適配器
-            emoji_handler = None
-            if self.discord_client:
-                emoji_handler = self.discord_client.emoji_handler
-            progress_adapter = DiscordProgressAdapter(original_message, emoji_handler)
+            # 使用傳入的 progress_adapter 或創建新的
+            if progress_adapter is None:
+                emoji_handler = None
+                if self.discord_client:
+                    emoji_handler = self.discord_client.emoji_handler
+                progress_adapter = DiscordProgressAdapter(original_message, emoji_handler)
+            
             agent.add_progress_observer(progress_adapter)
             
             # 準備初始狀態
