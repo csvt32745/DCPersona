@@ -122,6 +122,7 @@ GEMINI_API_KEY=your_gemini_api_key_here
 
 ```bash
 cp config-example.yaml config.yaml
+cp emoji_config-example.yaml emoji_config.yaml
 ```
 
 ### 5. 設定 Discord Bot
