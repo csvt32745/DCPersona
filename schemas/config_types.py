@@ -154,6 +154,7 @@ class LLMModelConfig:
     """LLM 模型配置"""
     model: str = "gemini-2.0-flash-exp"
     temperature: float = 0.7
+    max_output_tokens: int = 32
 
 
 @dataclass
@@ -206,6 +207,7 @@ class ProgressDiscordConfig:
     cleanup_delay: int = 30   # 完成後清理延遲
     show_percentage: bool = True
     show_eta: bool = False
+    auto_generate_messages: bool = False  # 自動產生進度訊息
     messages: Dict[str, str] = field(default_factory=lambda: _default_progress_messages())
 
 
@@ -373,6 +375,13 @@ class AppConfig:
                 messages_config = discord_progress.get("messages", {})
                 if isinstance(messages_config, dict):
                     AppConfig._validate_progress_message_keys(messages_config)
+        
+        # 驗證 LLM 模型配置
+        llm_config = data.get("llm", {})
+        if isinstance(llm_config, dict):
+            models_config = llm_config.get("models", {})
+            if isinstance(models_config, dict):
+                AppConfig._validate_llm_models_config(models_config)
     
     @staticmethod
     def _validate_progress_message_keys(messages_config: Dict[str, str]) -> None:
@@ -402,6 +411,20 @@ class AppConfig:
         except ImportError:
             # 如果無法導入 ProgressStage，記錄警告但不驗證
             logging.warning("無法導入 ProgressStage 進行 key 驗證")
+    
+    @staticmethod
+    def _validate_llm_models_config(models_config: Dict[str, Any]) -> None:
+        """驗證 LLM 模型配置
+        
+        Args:
+            models_config: LLM 模型配置字典
+        """
+        for model_name, model_config in models_config.items():
+            if isinstance(model_config, dict):
+                # 驗證 max_output_tokens 必須大於 0
+                max_tokens = model_config.get("max_output_tokens")
+                if max_tokens is not None and max_tokens <= 0:
+                    raise ConfigurationError(f"模型 {model_name} 的 max_output_tokens 必須大於 0")
     
     @classmethod
     def _dict_to_dataclass(cls, data: Dict[str, Any], dataclass_type):

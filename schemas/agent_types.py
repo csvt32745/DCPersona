@@ -62,6 +62,9 @@ class OverallState:
     agent_plan: Optional[AgentPlan] = None
     research_topic: str = ""
     
+    # Persona 管理
+    current_persona: Optional[str] = None
+    
     # 工具執行結果
     tool_results: Annotated[List[str], operator.add] = field(default_factory=list)
     aggregated_tool_results: List[str] = field(default_factory=list)

@@ -78,6 +78,7 @@
 
 ### ⚡ 即時體驗
 - **智能串流**: 基於時間和內容長度的智能串流策略
+- **智能進度訊息**: LLM 自動生成個性化進度訊息，可透過配置啟用/關閉
 - **統一進度管理**: 觀察者模式的解耦進度系統，支援多平台適配
 - **即時回應**: 逐字串流回應，即時進度更新和狀態同步
 - **錯誤處理**: 優雅的降級和錯誤恢復機制，自動回退到同步模式
@@ -198,7 +199,8 @@ DCPersona/
 │   ├── graph.py             # LangGraph 核心實現
 │   ├── agent_utils.py       # Agent 輔助函式
 │   ├── progress_observer.py # 進度觀察者介面
-│   └── progress_mixin.py    # 進度更新混入
+│   ├── progress_mixin.py    # 進度更新混入 (支援LLM進度訊息生成)
+│   └── progress_types.py    # 進度型別定義
 │
 ├── schemas/                 # 型別安全架構
 │   ├── agent_types.py       # Agent 核心型別
@@ -314,8 +316,16 @@ streaming:
 
 progress:
   discord:
-  update_interval: 2.0
+    update_interval: 2.0
     use_embeds: true
+    auto_generate_messages: true  # 啟用LLM智能進度訊息生成
+
+llm:
+  models:
+    progress_msg:
+      model: "gemini-2.0-flash-lite"
+      temperature: 0.4
+      max_output_tokens: 20  # 嚴格限制進度訊息長度
 
 
 discord:
@@ -329,6 +339,7 @@ discord:
 ### 配置特色
 - **型別安全**: 使用 dataclass 而非字典存取
 - **自動驗證**: 啟動時檢查配置完整性
+- **智能進度訊息**: 支援 LLM 自動生成進度訊息，可透過 `auto_generate_messages` 啟用/關閉
 - **控制**: 可配置的串流啟用和內容長度閾值
 - **進度管理**: 靈活的進度更新間隔和顯示模式，並可在 `progress.discord.messages` 透過對應 `ProgressStage` key 來自訂文字/emoji（含新加入的 `tool_status` 階段）
 

@@ -34,7 +34,7 @@ DCPersona/
 │   ├── agent_utils.py       # Agent 核心輔助函式
 │   ├── progress_observer.py # 進度觀察者介面（支援串流）
 │   ├── progress_types.py    # ProgressStage / ToolStatus 枚舉與符號映射
-│   └── progress_mixin.py    # 進度更新混入（整合串流功能）
+│   └── progress_mixin.py    # 進度更新混入（支援LLM智能進度訊息生成）
 │
 ├── schemas/                 # 型別安全資料架構
 │   ├── agent_types.py       # Agent 相關型別定義（狀態、計劃等）

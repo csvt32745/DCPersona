@@ -210,6 +210,8 @@ flowchart TD
 - **完整串流支援**: 整合 `on_streaming_chunk` 和 `on_streaming_complete` 方法
 - **統一介面**: 提供標準化的進度觀察者介面，支援自定義實現
 - **並行通知**: 支援並行通知所有註冊的觀察者，提高響應效率
+- **LLM 智能進度訊息**: 支援透過 LLM 自動生成個性化進度訊息，可透過配置啟用/關閉
+- **型別安全進度**: 使用 ProgressStage 枚舉確保進度階段的型別安全與一致性
 
 ### discord_bot/ - Discord 整合層
 
@@ -337,6 +339,14 @@ progress:
   discord:
     update_interval: 2.0    # 進度更新間隔（秒）
     use_embeds: true        # 使用 Discord embed 格式
+    auto_generate_messages: true  # 啟用LLM智能進度訊息生成
+
+llm:
+  models:
+    progress_msg:
+      model: "gemini-2.0-flash-lite"
+      temperature: 0.4      # 進度訊息用中等溫度
+      max_output_tokens: 20 # 嚴格限制進度訊息長度
 ```
 
 ---

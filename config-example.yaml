@@ -59,12 +59,19 @@ llm:
     tool_analysis:
       model: "gemini-2.0-flash-exp"
       temperature: 0.1     # 工具分析用較低溫度
+      max_output_tokens: 32768  # 最終回答需要較大的 token 限制
     final_answer:
       model: "gemini-2.0-flash-exp"
       temperature: 0.7     # 最終回答用中等溫度
+      max_output_tokens: 32768  # 最終回答需要較大的 token 限制
     reflection:
       model: "gemini-2.0-flash-exp"
       temperature: 0.3     # 反思用較低溫度
+      max_output_tokens: 256   # 反思用較小 token 限制
+    progress_msg:
+      model: "gemini-2.0-flash-lite"
+      temperature: 0.4     # 進度訊息用中等溫度
+      max_output_tokens: 20 # 嚴格限制回傳長度
 
 # Agent 配置
 agent:
@@ -117,6 +124,7 @@ progress:
     use_embeds: true       # 是否使用嵌入式訊息
     update_interval: 0.5     # 更新間隔（秒）
     cleanup_delay: 30      # 完成後清理延遲（秒）
+    auto_generate_messages: true  # 是否自動產生進度訊息（預設關閉）
     # 進度訊息配置 - 自訂各階段的顯示訊息
     messages:
       starting: "🔄 正在處理您的訊息..."

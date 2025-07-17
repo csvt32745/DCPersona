@@ -72,6 +72,9 @@ class UnifiedAgent(ProgressMixin):
             persona_cache_enabled=self.config.prompt_system.persona.cache_personas
         )
         
+        # 初始化進度 LLM
+        self._progress_llm = self.llm_instances.get("progress_msg")
+        
         # 初始化並綁定 LangChain 工具
         self._initialize_tools()
     
@@ -90,13 +93,21 @@ class UnifiedAgent(ProgressMixin):
                 # llm_config 現在總是 LLMModelConfig 實例
                 model_name = llm_config.model
                 temperature = llm_config.temperature
+                max_output_tokens = llm_config.max_output_tokens
                 
-                llm_instances[purpose] = ChatGoogleGenerativeAI(
-                    model=model_name,
-                    temperature=temperature,
-                    api_key=api_key
-                )
-                self.logger.info(f"初始化 {purpose} LLM: {model_name}")
+                # 準備 LLM 參數
+                llm_params = {
+                    "model": model_name,
+                    "temperature": temperature,
+                    "api_key": api_key
+                }
+                
+                # 如果設置了 max_output_tokens 且為有效值，則添加到參數中
+                if max_output_tokens is not None and max_output_tokens > 0:
+                    llm_params["max_output_tokens"] = max_output_tokens
+                
+                llm_instances[purpose] = ChatGoogleGenerativeAI(**llm_params)
+                self.logger.info(f"初始化 {purpose} LLM: {model_name} (max_tokens: {max_output_tokens})")
             except Exception as e:
                 self.logger.warning(f"初始化 {purpose} LLM 失敗: {e}")
                 llm_instances[purpose] = None
@@ -150,6 +161,34 @@ class UnifiedAgent(ProgressMixin):
             elif not self.available_tools:
                 self.logger.warning("沒有可用的工具，使用未綁定工具的 LLM")
     
+    async def _build_agent_messages_for_progress(self, stage: str, current_state) -> List:
+        """Agent 只處理 Agent 特有資訊
+        
+        Args:
+            stage: 進度階段
+            current_state: 當前狀態
+            
+        Returns:
+            List[BaseMessage]: Agent 構建的 messages
+        """
+        from langchain_core.messages import BaseMessage
+        
+        if not current_state:
+            return []
+        
+        # 1. 獲取前10則消息
+        recent_msg_nodes = current_state.messages[-10:] if current_state.messages else []
+        
+        # 2. 使用固定 persona 構建 system prompt
+        system_prompt = self.prompt_system.get_system_instructions(
+            self.config, persona=current_state.current_persona
+        )
+        
+        # 3. 構建 messages
+        messages = self._build_messages_for_llm(recent_msg_nodes, system_prompt)
+        
+        return messages
+    
     def build_graph(self) -> StateGraph:
         """建立簡化的 LangGraph"""
         builder = StateGraph(OverallState)
@@ -198,11 +237,19 @@ class UnifiedAgent(ProgressMixin):
         try:
             self.logger.info("generate_query_or_plan: 開始分析用戶請求")
             
+            # ★ 新增：確定 current_persona（在第一個節點處理）
+            if not state.current_persona:
+                if self.config.prompt_system.persona.random_selection:
+                    state.current_persona = self.prompt_system.get_random_persona_name()
+                else:
+                    state.current_persona = self.config.prompt_system.persona.default_persona
+            
             # 通知開始階段
             await self._notify_progress(
                 stage=ProgressStage.GENERATE_QUERY, 
                 message="",
                 progress_percentage=30,
+                current_state=state
             )
             
             user_content = _extract_text_content(state.messages[-1].content)
@@ -337,7 +384,8 @@ class UnifiedAgent(ProgressMixin):
                 await self._notify_progress(
                     stage=ProgressStage.TOOL_LIST,
                     message="🛠️ 工具進度",
-                    todo=[tc["name"] for tc in pending_tool_calls]
+                    todo=[tc["name"] for tc in pending_tool_calls],
+                    current_state=state
                 )
             except Exception as e:
                 self.logger.warning(f"發送工具清單進度失敗: {e}")
@@ -346,7 +394,8 @@ class UnifiedAgent(ProgressMixin):
             await self._notify_progress(
                 stage=ProgressStage.TOOL_EXECUTION,
                 message="",  # 使用配置中的訊息
-                progress_percentage=50
+                progress_percentage=50,
+                current_state=state
             )
             
             # 創建平行執行的任務
@@ -585,7 +634,8 @@ class UnifiedAgent(ProgressMixin):
             await self._notify_progress(
                 stage=ProgressStage.REFLECTION,
                 message="",  # 使用配置中的訊息
-                progress_percentage=75
+                progress_percentage=75,
+                current_state=state
             )
             
             # tool_results will be accumulated from parallel execute_single_tool calls
@@ -758,13 +808,15 @@ class UnifiedAgent(ProgressMixin):
                 await self._notify_progress(
                     stage=ProgressStage.COMPLETED,
                     message="✅ 提醒設定完成！",
-                    progress_percentage=90
+                    progress_percentage=90,
+                    current_state=state
                 )
             
             await self._notify_progress(
                 stage=ProgressStage.FINALIZE_ANSWER,
                 message="",  # 使用配置中的訊息
-                progress_percentage=90
+                progress_percentage=90,
+                current_state=state
             )
             
             messages = state.messages
@@ -825,7 +877,8 @@ class UnifiedAgent(ProgressMixin):
                 await self._notify_progress(
                     stage=ProgressStage.COMPLETED,
                     message="✅ 回答完成！",
-                    progress_percentage=100
+                    progress_percentage=100,
+                    current_state=state
                 )
             
             if state.reminder_requests:

@@ -108,7 +108,8 @@ class PromptSystem:
     def get_system_instructions(
         self,
         config: AppConfig,
-        messages_global_metadata: str = ""
+        messages_global_metadata: str = "",
+        persona: Optional[str] = None
     ) -> str:
         """
         獲取完整的系統指令，包括 persona、時間戳等
@@ -119,6 +120,7 @@ class PromptSystem:
         Args:
             config: 型別化配置實例
             messages_global_metadata: 全域訊息 metadata
+            persona: 指定的 persona 名稱（如果提供則使用固定 persona）
         
         Returns:
             str: 完整的系統指令
@@ -129,7 +131,14 @@ class PromptSystem:
         persona_cfg = config.prompt_system.persona
         
         # 1. 基礎系統提示詞（從統一的 persona 配置）
-        if persona_cfg.enabled:
+        if persona:
+            # 使用指定的 persona
+            specific_persona = self.get_specific_persona(persona, persona_cfg.persona_directory)
+            if specific_persona:
+                prompt_parts.append(specific_persona.strip())
+            elif persona_cfg.fallback:
+                prompt_parts.append(persona_cfg.fallback.strip())
+        elif persona_cfg.enabled:
             if persona_cfg.random_selection:
                 # 隨機選擇 persona
                 persona_prompt = self.random_system_prompt(persona_cfg.persona_directory)
@@ -266,6 +275,13 @@ class PromptSystem:
         except Exception as e:
             self.logger.error(f"獲取可用 persona 時出錯: {e}")
             return []
+    
+    def get_random_persona_name(self) -> str:
+        """獲取隨機 persona 名稱"""
+        available_personas = self.get_available_personas()
+        if available_personas:
+            return random.choice(available_personas)
+        return ""
     
     def get_cache_stats(self) -> Dict[str, Any]:
         """獲取快取統計資訊"""

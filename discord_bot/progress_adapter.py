@@ -99,7 +99,16 @@ class DiscordProgressAdapter(ProgressObserver):
             message = event.message
             if not message:
                 # 從配置載入訊息
-                message = self.config.progress.discord.messages.get(event.stage.value, event.stage.value)
+                stage_str = event.stage.value if hasattr(event.stage, 'value') else event.stage
+                message = self.config.progress.discord.messages.get(stage_str, stage_str)
+            
+            # ★ 新增：emoji 處理
+            if self.emoji_handler and message:
+                try:
+                    guild_id = self.original_message.guild.id if self.original_message.guild else None
+                    message = self.emoji_handler.format_emoji_output(message, guild_id)
+                except Exception as e:
+                    self.logger.warning(f"格式化進度訊息 emoji 失敗: {e}")
 
             # 轉換為 Discord 進度更新格式
             discord_progress = DiscordProgressUpdate(
