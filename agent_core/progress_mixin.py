@@ -350,15 +350,16 @@ class ProgressMixin:
         template_message = self.config.progress.discord.messages.get(stage, "") if hasattr(self, 'config') else ""
         
         progress_instruction = f'''
-你現在需要為進度階段 "{stage}" 生成簡短的進度訊息。
+你現在需要為進度階段 "{stage}:" 生成簡短的進度訊息。
 
-參考模板: {template_message}
+參考: {template_message}
 
 要求:
 - 嚴格限制在16字左右
-- 保持簡潔友好
+- 保持簡潔
+- 根據你的人格和當前對話發揮創意
+- 內容主軸要圍繞在當前進度
 - 使用適當的 emoji
-- 基於當前對話上下文
 '''
         
         # 在現有 SystemMessage 基礎上 chain
@@ -368,7 +369,7 @@ class ProgressMixin:
             new_messages[0] = SystemMessage(content=f"{original_system}\n\n{progress_instruction}")
         
         # 添加生成指令
-        new_messages.append(HumanMessage(content=f"請為 {stage} 階段生成約16字的簡短進度訊息"))
+        new_messages.append(HumanMessage(content=f"請為 {stage} 階段生成約16字的個性進度訊息: {template_message}"))
         
         return new_messages
     
