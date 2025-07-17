@@ -29,6 +29,12 @@ from utils.image_processor import (
     # 保留舊的導入以維持相容性，但會產生 deprecation warning
     is_discord_gif_url,
 )
+from utils.emoji_cache import (
+    get_global_cache,
+    generate_cache_key,
+    get_cache_stats,
+    clear_cache
+)
 
 
 @dataclass
@@ -632,10 +638,37 @@ async def _process_discord_stickers(
                     logging.warning(f"不支援的 sticker 格式: {format_name}")
                     continue
             
+            # 生成快取鍵值
+            frame_limit = config.max_animated_frames if config.enable_animated_processing else 1
+            cache_key = generate_cache_key(
+                sticker.id,
+                config.emoji_sticker_max_size,
+                frame_limit,
+                "sticker"
+            )
+            
+            # 嘗試從快取獲取
+            emoji_cache = get_global_cache()
+            cached_result = emoji_cache.get(cache_key)
+            if cached_result:
+                frame_data, is_animated = cached_result
+                
+                # 更新統計
+                stats["total"] += 1
+                if is_animated:
+                    stats["animated"] += 1
+                else:
+                    stats["static"] += 1
+                
+                sticker_images.extend(frame_data)
+                logging.debug(f"使用快取 sticker: {sticker.name}, 幀數: {len(frame_data)}")
+                continue
+            
+            # 快取未命中，進行原始處理
             # 載入 sticker 圖片
             frames, is_animated = await load_from_discord_emoji_sticker(
                 sticker, 
-                config.max_animated_frames if config.enable_animated_processing else 1
+                frame_limit
             )
             
             # 更新統計
@@ -654,6 +687,9 @@ async def _process_discord_stickers(
             # 轉換為 Base64 格式
             frame_data = convert_images_to_base64_dict(resized_frames)
             sticker_images.extend(frame_data)
+            
+            # 儲存到快取
+            emoji_cache.put(cache_key, (frame_data, is_animated))
             
             logging.debug(f"成功處理 sticker: {sticker.name}, 幀數: {len(frames)}")
             
@@ -702,10 +738,37 @@ async def _process_emoji_from_message(
         
         for emoji in emojis:
             try:
+                # 生成快取鍵值
+                frame_limit = config.max_animated_frames if config.enable_animated_processing else 1
+                cache_key = generate_cache_key(
+                    emoji.id,
+                    config.emoji_sticker_max_size,
+                    frame_limit,
+                    "emoji"
+                )
+                
+                # 嘗試從快取獲取
+                emoji_cache = get_global_cache()
+                cached_result = emoji_cache.get(cache_key)
+                if cached_result:
+                    frame_data, is_animated = cached_result
+                    
+                    # 更新統計
+                    stats["total"] += 1
+                    if is_animated:
+                        stats["animated"] += 1
+                    else:
+                        stats["static"] += 1
+                    
+                    emoji_images.extend(frame_data)
+                    logging.debug(f"使用快取 emoji: {emoji.name if hasattr(emoji, 'name') else 'unknown'}, 幀數: {len(frame_data)}")
+                    continue
+                
+                # 快取未命中，進行原始處理
                 # 載入 emoji 圖片
                 frames, is_animated = await load_from_discord_emoji_sticker(
                     emoji,
-                    config.max_animated_frames if config.enable_animated_processing else 1
+                    frame_limit
                 )
                 
                 # 更新統計
@@ -724,6 +787,9 @@ async def _process_emoji_from_message(
                 # 轉換為 Base64 格式
                 frame_data = convert_images_to_base64_dict(resized_frames)
                 emoji_images.extend(frame_data)
+                
+                # 儲存到快取
+                emoji_cache.put(cache_key, (frame_data, is_animated))
                 
                 logging.debug(f"成功處理 emoji: {emoji.name if hasattr(emoji, 'name') else 'unknown'}, 幀數: {len(frames)}")
                 
@@ -761,6 +827,23 @@ def _generate_media_summary(
     if parts:
         return f"[包含: {', '.join(parts)}]"
     return ""
+
+
+def get_emoji_cache_stats() -> Dict[str, Any]:
+    """
+    獲取 emoji 圖片快取統計資訊
+    
+    Returns:
+        Dict[str, Any]: 快取統計資訊
+    """
+    return get_cache_stats()
+
+
+def clear_emoji_cache() -> None:
+    """
+    清空 emoji 圖片快取
+    """
+    clear_cache()
 
 
  
