@@ -393,10 +393,6 @@ class ProgressMixin:
             response = await self._progress_llm.ainvoke(messages)
             content = response.content.strip()
             
-            # 長度控制
-            if len(content) > 64:
-                content = content[:64] + "..."
-            
             return content
             
         except Exception as e:
