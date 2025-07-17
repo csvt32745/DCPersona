@@ -158,8 +158,8 @@ class EmojiHandler:
 Emoji 使用說明：
 {context}
 
-請在回應中適當使用這些 emoji 來增加表達的生動性。直接使用 emoji 格式即可。
-例如：<:thinking:123456789012345678> 讓我想想... <:happy:123456789012345679>
+請在回應中適當使用這些 emoji 來增加表達的生動性。直接使用以上提供的 emoji 格式 `<a?:emoji_name:emoji_id>` 。
+例如：<:thinking:123456789012345678> 讓我想想... <a:happy:123456789012345679>
 """
     
     def get_stats(self) -> Dict[str, int]:
