@@ -138,7 +138,7 @@ class EmojiHandler:
             context_parts.append("**可用的應用程式 Emoji:**")
             for emoji_id, emoji in app_emojis.items():
                 description = self.config.application.get(emoji_id, "")
-                context_parts.append(f"- [emoji:{emoji_id}] - {description}")
+                context_parts.append(f"- {str(emoji)} - {description}")
         
         # 伺服器 emoji
         if guild_id is not None:
@@ -148,7 +148,7 @@ class EmojiHandler:
                 for emoji_id, emoji in guild_emojis.items():
                     guild_config = self.config.guilds.get(guild_id, {})
                     description = guild_config.get(emoji_id, "")
-                    context_parts.append(f"- [emoji:{emoji_id}] - {description}")
+                    context_parts.append(f"- {str(emoji)} - {description}")
         
         if not context_parts:
             return ""
@@ -158,69 +158,11 @@ class EmojiHandler:
 Emoji 使用說明：
 {context}
 
-請在回應中適當使用這些 emoji 來增加表達的生動性。使用格式：[emoji:emoji_id]
-例如：[emoji:123456789012345678] 讓我想想... [emoji:123456789012345679]
+請在回應中適當使用這些 emoji 來增加表達的生動性。直接使用 emoji 格式即可。
+例如：<:thinking:123456789012345678> 讓我想想... <:happy:123456789012345679>
 """
     
-    def format_emoji_output(self, text: str, guild_id: Optional[int] = None) -> str:
-        """
-        格式化文字中的 emoji 標記
-        
-        Args:
-            text: 包含 [emoji:id] 標記的文字
-            guild_id: 可選的伺服器 ID，優先使用伺服器 emoji
-            
-        Returns:
-            str: 格式化後的文字
-        """
-        if not text:
-            return text
-        
-        # 查找所有 [emoji:id] 標記
-        emoji_pattern = r'\[emoji:([^\]]+)\]'
-        matches = re.findall(emoji_pattern, text)
-        
-        if not matches:
-            return text
-        
-        # 替換每個 emoji 標記
-        self.logger.debug(f"format_emoji_output: {matches}")
-        for emoji_id_str in matches:
-            try:
-                emoji_id = int(emoji_id_str)
-                formatted_emoji = self._get_formatted_emoji(emoji_id, guild_id)
-                if formatted_emoji:
-                    text = text.replace(f"[emoji:{emoji_id_str}]", formatted_emoji)
-                else:
-                    # 如果找不到 emoji，保留原始標記或移除
-                    self.logger.warning(f"找不到 emoji: {emoji_id}")
-                    text = text.replace(f"[emoji:{emoji_id_str}]", "")
-            except ValueError:
-                self.logger.warning(f"無效的 emoji ID: {emoji_id_str}")
-                text = text.replace(f"[emoji:{emoji_id_str}]", "")
-        
-        return text
     
-    def _get_formatted_emoji(self, emoji_id: int, guild_id: Optional[int] = None) -> Optional[str]:
-        """
-        獲取格式化的 emoji 字串
-        
-        Args:
-            emoji_id: Emoji ID
-            guild_id: 可選的伺服器 ID
-            
-        Returns:
-            Optional[str]: 格式化的 emoji 字串，如果未找到則返回 None
-        """
-        # 優先使用伺服器 emoji
-        if guild_id is not None:
-            guild_lookup = self.emoji_lookup.get(guild_id, {})
-            if emoji_id in guild_lookup:
-                return guild_lookup[emoji_id]
-        
-        # 使用應用程式 emoji
-        app_lookup = self.emoji_lookup.get(-1, {})
-        return app_lookup.get(emoji_id)
     
     
     def get_stats(self) -> Dict[str, int]:

@@ -102,13 +102,7 @@ class DiscordProgressAdapter(ProgressObserver):
                 stage_str = event.stage.value if hasattr(event.stage, 'value') else event.stage
                 message = self.config.progress.discord.messages.get(stage_str, stage_str)
             
-            # ★ 新增：emoji 處理
-            if self.emoji_handler and message:
-                try:
-                    guild_id = self.original_message.guild.id if self.original_message.guild else None
-                    message = self.emoji_handler.format_emoji_output(message, guild_id)
-                except Exception as e:
-                    self.logger.warning(f"格式化進度訊息 emoji 失敗: {e}")
+            # emoji 處理已不需要，因為 LLM 直接生成正確格式
 
             # 轉換為 Discord 進度更新格式
             discord_progress = DiscordProgressUpdate(
@@ -183,12 +177,7 @@ class DiscordProgressAdapter(ProgressObserver):
                     
                     # 格式化 emoji 輸出
                     formatted_content = self._streaming_content
-                    if self.emoji_handler:
-                        try:
-                            guild_id = self.original_message.guild.id if self.original_message.guild else None
-                            formatted_content = self.emoji_handler.format_emoji_output(self._streaming_content, guild_id)
-                        except Exception as e:
-                            self.logger.warning(f"格式化串流 emoji 失敗: {e}")
+                    # emoji 處理已不需要，因為 LLM 直接生成正確格式
                     
                     await self.progress_manager.send_or_update_progress(
                         original_message=self.original_message,
@@ -209,13 +198,7 @@ class DiscordProgressAdapter(ProgressObserver):
             if len(display_content) > 1800:
                 display_content = display_content[:1800] + "..."
             
-            # 格式化 emoji 輸出（串流模式）
-            if self.emoji_handler:
-                try:
-                    guild_id = self.original_message.guild.id if self.original_message.guild else None
-                    display_content = self.emoji_handler.format_emoji_output(display_content, guild_id)
-                except Exception as e:
-                    self.logger.warning(f"格式化串流 emoji 失敗: {e}")
+            # emoji 處理已不需要，因為 LLM 直接生成正確格式
             
             # 使用 progress_manager 更新串流進度
             streaming_progress = DiscordProgressUpdate(
@@ -281,14 +264,8 @@ class DiscordProgressAdapter(ProgressObserver):
                     for source in sources[:5]  # 限制最多5個來源
                 ]
             
-            # 格式化 emoji 輸出
+            # emoji 處理已不需要，因為 LLM 直接生成正確格式
             formatted_result = final_result
-            if self.emoji_handler:
-                try:
-                    guild_id = self.original_message.guild.id if self.original_message.guild else None
-                    formatted_result = self.emoji_handler.format_emoji_output(final_result, guild_id)
-                except Exception as e:
-                    self.logger.warning(f"格式化 emoji 失敗: {e}")
             
             # 發送完成更新
             await self.progress_manager.send_or_update_progress(

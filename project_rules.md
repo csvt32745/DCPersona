@@ -110,7 +110,7 @@ DCPersona/
 5.  **LangGraph 執行**: 執行 `generate_query_or_plan` → `execute_tools` → `reflection` → `finalize_answer` 流程，其中 `execute_tools` 節點會呼叫 LangChain 工具（如 `set_reminder`）。
 6.  **智能串流處理**: 在 `finalize_answer` 階段根據配置啟用串流回應，基於時間和內容長度智能更新。
 7.  **統一進度管理**: 透過 `DiscordProgressAdapter` 和 `ProgressManager` 統一處理所有 Discord 訊息操作。
-8.  **Emoji 格式化**: 使用 `EmojiHandler` 將 LLM 輸出中的 `[emoji:id]` 標記轉換為 Discord emoji 格式。
+8.  **Emoji 提示**: 使用 `EmojiHandler` 在 LLM 提示中提供可用的 emoji 格式，LLM 直接生成正確的 Discord emoji 格式。
 9.  **結果回覆**: 將最終答案格式化後回覆到 Discord，支援串流和非串流兩種模式。
 10. **提醒排程**: 若 Agent 執行 `set_reminder` 工具成功，`message_handler.py` 會從 Agent 狀態中提取 `ReminderDetails`，並將其傳遞給 `event_scheduler/scheduler.py` 進行排程。
 11. **提醒觸發**: 當 `event_scheduler/scheduler.py` 觸發提醒事件時，會呼叫 `message_handler.py` 中註冊的回調函數，該函數會建構一個模擬訊息，重新送回 Agent 處理以生成提醒內容，並最終發送至 Discord。

@@ -265,8 +265,13 @@ class TestEmojiHandler:
         # 模擬已載入的 emoji
         mock_emoji1 = Mock()
         mock_emoji1.name = "test_emoji"
+        mock_emoji1.id = 123456789
+        mock_emoji1.__str__ = Mock(return_value="<:test_emoji:123456789>")
+        
         mock_emoji2 = Mock()
         mock_emoji2.name = "guild_emoji"
+        mock_emoji2.id = 111222333
+        mock_emoji2.__str__ = Mock(return_value="<:guild_emoji:111222333>")
         
         emoji_handler.available_emojis[-1] = {123456789: mock_emoji1}
         emoji_handler.available_emojis[999888777] = {111222333: mock_emoji2}
@@ -274,60 +279,35 @@ class TestEmojiHandler:
         # 測試只有應用程式 emoji
         context = emoji_handler.build_prompt_context()
         assert "可用的應用程式 Emoji" in context
-        assert "[emoji:123456789]" in context
+        assert "<:test_emoji:123456789>" in context
         assert "test emoji" in context
         
         # 測試包含伺服器 emoji
         context_with_guild = emoji_handler.build_prompt_context(999888777)
         assert "可用的應用程式 Emoji" in context_with_guild
         assert "當前伺服器可用的 Emoji" in context_with_guild
-        assert "[emoji:111222333]" in context_with_guild
+        assert "<:guild_emoji:111222333>" in context_with_guild
         assert "guild emoji 1" in context_with_guild
     
     def test_format_emoji_output_no_emojis(self, emoji_handler):
-        """測試沒有 emoji 標記的文字格式化"""
-        text = "這是一段沒有 emoji 的文字"
-        result = emoji_handler.format_emoji_output(text)
-        assert result == text
+        """測試沒有 emoji 標記的文字格式化 - 現在此方法已移除"""
+        # 此測試已不再需要，因為 format_emoji_output 方法已移除
+        pass
     
     def test_format_emoji_output_with_valid_emojis(self, emoji_handler):
-        """測試有效 emoji 標記的格式化"""
-        # 設置 emoji_lookup
-        emoji_handler.emoji_lookup[-1] = {
-            123456789: "<:test_emoji:123456789>",
-            987654321: "<:another_emoji:987654321>"
-        }
-        emoji_handler.emoji_lookup[999888777] = {
-            111222333: "<:guild_emoji:111222333>"
-        }
-        
-        # 測試應用程式 emoji
-        text = "這是 [emoji:123456789] 和 [emoji:987654321] 的測試"
-        result = emoji_handler.format_emoji_output(text)
-        expected = "這是 <:test_emoji:123456789> 和 <:another_emoji:987654321> 的測試"
-        assert result == expected
-        
-        # 測試伺服器 emoji 優先
-        text = "這是 [emoji:111222333] 的測試"
-        result = emoji_handler.format_emoji_output(text, 999888777)
-        expected = "這是 <:guild_emoji:111222333> 的測試"
-        assert result == expected
+        """測試有效 emoji 標記的格式化 - 現在此方法已移除"""
+        # 此測試已不再需要，因為 format_emoji_output 方法已移除
+        pass
     
     def test_format_emoji_output_invalid_emoji_id(self, emoji_handler):
-        """測試無效 emoji ID 的處理"""
-        text = "這是 [emoji:invalid] 和 [emoji:999999999] 的測試"
-        result = emoji_handler.format_emoji_output(text)
-        expected = "這是  和  的測試"  # 無效 emoji 被移除
-        assert result == expected
+        """測試無效 emoji ID 的處理 - 現在此方法已移除"""
+        # 此測試已不再需要，因為 format_emoji_output 方法已移除
+        pass
     
     def test_format_emoji_output_mixed_valid_invalid(self, emoji_handler):
-        """測試混合有效和無效 emoji 的處理"""
-        emoji_handler.emoji_lookup[-1] = {123456789: "<:test_emoji:123456789>"}
-        
-        text = "有效: [emoji:123456789], 無效: [emoji:999999999], 文字: [emoji:invalid]"
-        result = emoji_handler.format_emoji_output(text)
-        expected = "有效: <:test_emoji:123456789>, 無效: , 文字: "
-        assert result == expected
+        """測試混合有效和無效 emoji 的處理 - 現在此方法已移除"""
+        # 此測試已不再需要，因為 format_emoji_output 方法已移除
+        pass
     
     def test_get_stats(self, emoji_handler):
         """測試統計資訊獲取"""
@@ -349,14 +329,13 @@ class TestEmojiIntegration:
     
     @pytest.mark.asyncio
     async def test_progress_adapter_emoji_formatting(self):
-        """測試 DiscordProgressAdapter 中的 emoji 格式化"""
+        """測試 DiscordProgressAdapter 中的 emoji 格式化 - 現在不再需要格式化"""
         # 模擬 Discord 訊息
         mock_message = Mock()
         mock_message.guild.id = 999888777
         
         # 模擬 EmojiHandler
         mock_emoji_handler = Mock()
-        mock_emoji_handler.format_emoji_output.return_value = "格式化後的文字 <:test:123>"
         
         # 創建 DiscordProgressAdapter
         adapter = DiscordProgressAdapter(mock_message, mock_emoji_handler)
@@ -366,17 +345,12 @@ class TestEmojiIntegration:
         adapter.progress_manager.send_or_update_progress = AsyncMock()
         
         # 測試 on_completion 中的 emoji 格式化
-        await adapter.on_completion("測試文字 [emoji:123456789]", [])
+        await adapter.on_completion("測試文字 <:test:123456789>", [])
         
-        # 驗證 emoji_handler.format_emoji_output 被調用
-        mock_emoji_handler.format_emoji_output.assert_called_once_with(
-            "測試文字 [emoji:123456789]", 999888777
-        )
-        
-        # 驗證格式化後的文字被發送
+        # 驗證 emoji 直接傳遞，沒有呼叫 format_emoji_output
         adapter.progress_manager.send_or_update_progress.assert_called_once()
         call_args = adapter.progress_manager.send_or_update_progress.call_args
-        assert call_args[1]["final_answer"] == "格式化後的文字 <:test:123>"
+        assert call_args[1]["final_answer"] == "測試文字 <:test:123456789>"
     
     @pytest.mark.asyncio 
     async def test_progress_adapter_no_emoji_handler(self):
@@ -397,27 +371,24 @@ class TestEmojiIntegration:
     
     @pytest.mark.asyncio
     async def test_streaming_emoji_formatting(self):
-        """測試串流模式的 emoji 格式化"""
+        """測試串流模式的 emoji 格式化 - 現在不再需要格式化"""
         mock_message = Mock()
         mock_message.guild.id = 999888777
         
         mock_emoji_handler = Mock()
-        mock_emoji_handler.format_emoji_output.return_value = "串流文字 <:emoji:123>"
         
         adapter = DiscordProgressAdapter(mock_message, mock_emoji_handler)
         adapter.progress_manager = Mock()
         adapter.progress_manager.send_or_update_progress = AsyncMock(return_value=Mock())
         
         # 模擬串流內容
-        adapter._streaming_content = "串流文字 [emoji:123456789]"
+        adapter._streaming_content = "串流文字 <:emoji:123456789>"
         
         # 測試 _update_streaming_message
         await adapter._update_streaming_message()
         
-        # 驗證 emoji 格式化被調用
-        mock_emoji_handler.format_emoji_output.assert_called_once_with(
-            "串流文字 [emoji:123456789]", 999888777
-        )
+        # 驗證 emoji 直接傳遞，沒有呼叫 format_emoji_output
+        adapter.progress_manager.send_or_update_progress.assert_called_once()
 
 
 class TestEmojiRealWorldScenarios:
@@ -477,17 +448,27 @@ application:
         with patch('prompt_system.emoji_handler.EmojiConfig.from_yaml', return_value=config):
             handler = EmojiHandler("test_config.yaml")
             
-            # 模擬載入的 emoji
-            handler.emoji_lookup[-1] = {
-                1362820638489972937: "<:kawaii:1362820638489972937>"
-            }
-            handler.emoji_lookup[730024186852147240] = {
-                959699262587928586: "<:turtle_smug:959699262587928586>",
-                791232834697953330: "<:frog_funny:791232834697953330>"
+            # 模擬已載入的 emoji
+            mock_app_emoji = Mock()
+            mock_app_emoji.__str__ = Mock(return_value="<:kawaii:1362820638489972937>")
+            
+            mock_guild_emoji1 = Mock()
+            mock_guild_emoji1.__str__ = Mock(return_value="<:turtle_smug:959699262587928586>")
+            
+            mock_guild_emoji2 = Mock()
+            mock_guild_emoji2.__str__ = Mock(return_value="<:frog_funny:791232834697953330>")
+            
+            handler.available_emojis[-1] = {1362820638489972937: mock_app_emoji}
+            handler.available_emojis[730024186852147240] = {
+                959699262587928586: mock_guild_emoji1,
+                791232834697953330: mock_guild_emoji2
             }
             
-            # 測試格式化
-            text = "This is [emoji:1362820638489972937] cute! Turtle says [emoji:959699262587928586]"
-            result = handler.format_emoji_output(text, 730024186852147240)
-            expected = "This is <:kawaii:1362820638489972937> cute! Turtle says <:turtle_smug:959699262587928586>"
-            assert result == expected
+            # 測試 build_prompt_context
+            context = handler.build_prompt_context(730024186852147240)
+            assert "<:kawaii:1362820638489972937>" in context
+            assert "<:turtle_smug:959699262587928586>" in context
+            assert "<:frog_funny:791232834697953330>" in context
+            assert "cute signature expression" in context
+            assert "smug turtle" in context
+            assert "funny frog" in context

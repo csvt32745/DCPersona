@@ -360,9 +360,9 @@ DCPersona 包含一個智能 emoji 輔助系統，能夠根據伺服器上下文
 - **配置驅動**: 通過 `emoji_config.yaml` 管理 emoji 配置
 - **型別安全**: 使用 `EmojiConfig` dataclass 確保配置正確性
 - **上下文感知**: 根據 Discord 伺服器智能選擇適當的 emoji
-- **自動格式化**: 將 `[emoji:id]` 標記轉換為 Discord emoji 格式
+- **直接格式**: LLM 直接生成正確的 Discord emoji 格式
 - **異步載入**: Bot 啟動時異步驗證 emoji 可用性
-- **快速處理**: 訊息處理時同步格式化，保證響應速度
+- **快速處理**: 提供 prompt context 給 LLM，無需格式化步驟
 
 ### 架構組件
 
@@ -394,16 +394,13 @@ class EmojiHandler:
         # 異步載入和驗證所有 emoji
         
     def build_prompt_context(self, guild_id: Optional[int] = None) -> str:
-        # 生成 LLM 提示上下文
-        
-    def format_emoji_output(self, text: str, guild_id: Optional[int] = None) -> str:
-        # 格式化 emoji 輸出
+        # 生成 LLM 提示上下文，包含可用的 emoji 格式
 ```
 
 **主要功能**:
 - **異步 emoji 載入**: Bot 啟動時驗證所有配置中的 emoji 是否可用
 - **智能上下文生成**: 根據伺服器 ID 生成包含可用 emoji 的 LLM 提示
-- **自動格式化**: 將 `[emoji:123456789]` 轉換為 `<:emoji_name:123456789>`
+- **直接格式提供**: 在 prompt 中直接提供 `<:emoji_name:123456789>` 格式
 - **優先級處理**: 伺服器 emoji 優先於應用程式 emoji
 - **統計資訊**: 提供 emoji 載入統計和診斷資訊
 
@@ -446,9 +443,8 @@ def _prepare_agent_state(self, collected_messages, original_message):
 ```python
 # discord_bot/progress_adapter.py
 async def on_completion(self, final_result: str, sources: Optional[List[Dict]] = None):
-    if self.emoji_handler:
-        guild_id = self.original_message.guild.id if self.original_message.guild else None
-        formatted_result = self.emoji_handler.format_emoji_output(final_result, guild_id)
+    # emoji 處理已不需要，因為 LLM 直接生成正確格式
+    formatted_result = final_result
 ```
 
 ### 測試覆蓋
@@ -465,20 +461,19 @@ async def on_completion(self, final_result: str, sources: Optional[List[Dict]] =
 ```text
 Emoji 使用說明：
 **可用的應用程式 Emoji:**
-- [emoji:1362820638489972937] - 裝可愛，招牌表情
+- <:kawaii:1362820638489972937> - 裝可愛，招牌表情
 
 **當前伺服器可用的 Emoji:**
-- [emoji:791232834697953330] - 好笑青蛙
-- [emoji:959699262587928586] - 得意 =w= 烏龜
+- <:frog_funny:791232834697953330> - 好笑青蛙
+- <:turtle_smug:959699262587928586> - 得意 =w= 烏龜
 
-請在回應中適當使用這些 emoji 來增加表達的生動性。
-使用格式：[emoji:emoji_id]
+請在回應中適當使用這些 emoji 來增加表達的生動性。直接使用 emoji 格式即可。
 ```
 
-#### 自動格式化
+#### 直接使用
 ```text
-輸入: "這真是太棒了 [emoji:1362820638489972937]！"
-輸出: "這真是太棒了 <:kawaii:1362820638489972937>！"
+LLM 直接生成: "這真是太棒了 <:kawaii:1362820638489972937>！"
+無需額外格式化步驟
 ```
 
 ---
