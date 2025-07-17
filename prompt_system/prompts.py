@@ -199,6 +199,8 @@ class PromptSystem:
         
         discord_integration_cfg = config.prompt_system.discord_integration
         context_parts = []
+        context_parts.append("User's names are their Discord IDs and should be typed as '<@ID>' instead of their name.")
+        context_parts.append("對話歷史會用'<@ID> Name:' 來表示講話者的名稱和 Discord ID，請記住對話中可能有不同人參與")
         
         # Bot ID 和名稱資訊
         if discord_context.bot_id:
@@ -206,7 +208,6 @@ class PromptSystem:
                 context_parts.append(f"<@{discord_context.bot_id}> ({discord_context.bot_name}) 是你的 ID，如果有人提到 <@{discord_context.bot_id}> 就是在說你")
             else:
                 context_parts.append(f"<@{discord_context.bot_id}> 是你的 ID，如果有人提到 <@{discord_context.bot_id}> 就是在說你")
-            context_parts.append("User's names are their Discord IDs and should be typed as '<@ID>'.")
         
         context_parts.append("注意：若對話中有 || 內容 || 的對話內容，請記得跟著一起用 || 內容 || 包起來，防止意外暴雷，例如: ||答案||")
         

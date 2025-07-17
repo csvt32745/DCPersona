@@ -162,9 +162,6 @@ Emoji 使用說明：
 例如：<:thinking:123456789012345678> 讓我想想... <:happy:123456789012345679>
 """
     
-    
-    
-    
     def get_stats(self) -> Dict[str, int]:
         """
         獲取 emoji 載入統計資訊
