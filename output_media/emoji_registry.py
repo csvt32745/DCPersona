@@ -1,7 +1,7 @@
 """
-Emoji 處理器
+Emoji 註冊器
 
-統一的 EmojiHandler 類別，負責載入、驗證和格式化 Discord Bot 的 emoji 功能。
+統一的 EmojiRegistry 類別，負責載入、驗證和格式化 Discord Bot 的 emoji 功能。
 實現配置驅動、非同步預先驗證和快速同步處理的設計模式。
 """
 
@@ -11,19 +11,19 @@ import re
 from typing import Dict, Optional, List, Tuple
 from pathlib import Path
 
-from schemas.emoji_types import EmojiConfig
+from .emoji_types import EmojiConfig
 
 
-class EmojiHandler:
+class EmojiRegistry:
     """
-    統一的 Emoji 處理器
+    統一的 Emoji 註冊器
     
     負責載入配置、驗證 emoji 可用性、生成提示上下文和格式化輸出。
     """
     
     def __init__(self, config_path: str = "emoji_config.yaml"):
         """
-        初始化 EmojiHandler
+        初始化 EmojiRegistry
         
         Args:
             config_path: emoji 配置檔案路徑
@@ -43,7 +43,7 @@ class EmojiHandler:
         self.available_emojis: Dict[int, Dict[int, discord.Emoji]] = {}
         self.emoji_lookup: Dict[int, Dict[int, str]] = {}  # {guild_id: {emoji_id: formatted_string}}
         
-        self.logger.info(f"EmojiHandler 已初始化，配置路徑: {config_path}")
+        self.logger.info(f"EmojiRegistry 已初始化，配置路徑: {config_path}")
     
     async def load_emojis(self, client: discord.Client) -> None:
         """
@@ -180,4 +180,4 @@ Emoji 使用說明：
             "guild_emojis": guild_count,
             "total_emojis": app_count + guild_count,
             "configured_guilds": len([k for k in self.available_emojis.keys() if k != -1])
-        }
+        } 

@@ -15,7 +15,7 @@ from agent_core.progress_types import ProgressStage, ToolStatus, TOOL_STATUS_SYM
 from schemas.agent_types import DiscordProgressUpdate, ResearchSource
 from .progress_manager import get_progress_manager
 from utils.config_loader import load_typed_config
-from prompt_system.emoji_handler import EmojiHandler
+from output_media.emoji_registry import EmojiRegistry
 
 
 class DiscordProgressAdapter(ProgressObserver):
@@ -25,7 +25,7 @@ class DiscordProgressAdapter(ProgressObserver):
     與現有的 progress_manager 系統整合。
     """
     
-    def __init__(self, original_message: discord.Message, emoji_handler: Optional[EmojiHandler] = None):
+    def __init__(self, original_message: discord.Message, emoji_handler: Optional[EmojiRegistry] = None):
         """
         初始化 Discord 進度適配器
         

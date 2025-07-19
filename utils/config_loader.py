@@ -109,17 +109,4 @@ def get_enabled_tools(config_path: str = "config.yaml") -> list[str]:
 
 
 # 向後相容性別名 - 重定向到型別安全版本
-def load_config(filename: str = "config.yaml") -> AppConfig:
-    """載入配置（向後相容性別名）
-    
-    注意：此函數現在返回 AppConfig 實例而非字典。
-    請更新代碼使用型別安全的屬性存取方式。
-    
-    Args:
-        filename: 配置檔案路徑
-        
-    Returns:
-        AppConfig: 型別安全的配置實例
-    """
-    logging.warning("load_config() 已棄用，請使用 load_typed_config() 並更新代碼使用型別安全存取")
-    return load_typed_config(filename) 
+# 舊的 load_config() 已移除，請全面使用 load_typed_config() 

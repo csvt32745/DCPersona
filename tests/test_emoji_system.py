@@ -10,8 +10,8 @@ import os
 from unittest.mock import Mock, AsyncMock, patch
 from pathlib import Path
 
-from schemas.emoji_types import EmojiConfig
-from prompt_system.emoji_handler import EmojiHandler
+from output_media.emoji_types import EmojiConfig
+from output_media.emoji_registry import EmojiRegistry
 from discord_bot.progress_adapter import DiscordProgressAdapter
 
 
@@ -173,9 +173,9 @@ class TestEmojiHandler:
     
     @pytest.fixture
     def emoji_handler(self, sample_config):
-        """提供測試用的 EmojiHandler"""
-        with patch('prompt_system.emoji_handler.EmojiConfig.from_yaml', return_value=sample_config):
-            handler = EmojiHandler("test_config.yaml")
+        """提供測試用的 EmojiRegistry"""
+        with patch('output_media.emoji_types.EmojiConfig.from_yaml', return_value=sample_config):
+            handler = EmojiRegistry("test_config.yaml")
             return handler
     
     def test_emoji_handler_initialization(self, emoji_handler):
@@ -255,8 +255,8 @@ class TestEmojiHandler:
     def test_build_prompt_context_empty_config(self):
         """測試空配置的提示上下文生成"""
         empty_config = EmojiConfig(application={}, guilds={})
-        with patch('prompt_system.emoji_handler.EmojiConfig.from_yaml', return_value=empty_config):
-            handler = EmojiHandler("test_config.yaml")
+        with patch('output_media.emoji_types.EmojiConfig.from_yaml', return_value=empty_config):
+            handler = EmojiRegistry("test_config.yaml")
             context = handler.build_prompt_context()
             assert context == ""
     
@@ -445,8 +445,8 @@ application:
             }
         )
         
-        with patch('prompt_system.emoji_handler.EmojiConfig.from_yaml', return_value=config):
-            handler = EmojiHandler("test_config.yaml")
+        with patch('output_media.emoji_types.EmojiConfig.from_yaml', return_value=config):
+            handler = EmojiRegistry("test_config.yaml")
             
             # 模擬已載入的 emoji
             mock_app_emoji = Mock()

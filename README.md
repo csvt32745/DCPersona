@@ -70,6 +70,9 @@
 ### 🌐 多模態支援
 - **圖片理解**: 支援 Discord 圖片輸入和 Vision 模型，並將圖片內容轉換為 Base64 編碼以供 LLM 處理
 - **Emoji / Sticker / 動畫**: 內建 `image_processor` 模組，完整支援自定義 Emoji、Discord Sticker（PNG/APNG/GIF/WebP）與 GIF/APNG/WebP 動畫（含幀取樣）。
+- **輸入/輸出媒體管線**:
+  - **Input**: `message_collector` 結合 `InputMediaConfig` 和 `input_emoji_cache` 解析用戶訊息中的媒體。
+  - **Output**: `output_media` 模組（`EmojiRegistry`, `OutputStickerRegistry`, `OutputMediaContextBuilder`）負責生成 Bot 回覆的媒體內容和提示上下文。
 - **智能 Emoji 輔助**: 配置驅動的 emoji 系統，根據伺服器上下文智能建議 emoji，LLM 直接生成正確的 Discord 格式
 - **Embed Media 支援**: 自動偵測 `embed._thumbnail` / `embed.image` 的外部圖片 URL，封裝為 VirtualAttachment 與附件流程統一。
 - **媒體統計與摘要**: `message_collector` 會統計 emoji/sticker/靜態/動畫圖片數量並於訊息末尾附加 `[包含: ...]` 標記，`MULTIMODAL_GUIDANCE` 提示詞協助 LLM 解讀。
@@ -191,9 +194,15 @@ DCPersona/
 │   ├── client.py            # Discord Client 初始化
 │   ├── commands/            # Slash Command 定義 (自動掃描並集中註冊)
 │   ├── message_handler.py   # 訊息事件處理
-│   ├── message_collector.py # 多模態訊息收集
+│   ├── message_collector.py # 多模態訊息收集 (Input)
 │   ├── progress_manager.py  # 進度消息管理
 │   └── progress_adapter.py  # 進度適配器（串流支援）
+│
+├── output_media/            # ✨ 輸出媒體管線 (Output)
+│   ├── emoji_registry.py    # Emoji 註冊與格式化
+│   ├── sticker_registry.py  # Sticker 註冊 (預留)
+│   ├── context_builder.py   # 媒體提示上下文建構
+│   └── emoji_types.py       # Emoji 系統型別定義
 │
 ├── agent_core/              # 統一 Agent 引擎
 │   ├── graph.py             # LangGraph 核心實現
@@ -205,7 +214,7 @@ DCPersona/
 ├── schemas/                 # 型別安全架構
 │   ├── agent_types.py       # Agent 核心型別
 │   ├── config_types.py      # 配置型別定義
-│   ├── emoji_types.py       # Emoji 系統型別定義
+│   ├── input_media_config.py # ✨ 輸入媒體配置型別
 │   └── __init__.py
 │
 ├── prompt_system/           # 提示詞管理
@@ -218,6 +227,7 @@ DCPersona/
 │   ├── logger.py            # 日誌系統
 │   ├── common_utils.py      # 通用輔助函式
 │   ├── image_processor.py   # 圖片 / Emoji / Sticker / 動畫處理核心
+│   ├── input_emoji_cache.py # ✨ 輸入 Emoji 快取
 │   ├── wordle_service.py    # Wordle 遊戲提示服務
 │   └── __init__.py
 │

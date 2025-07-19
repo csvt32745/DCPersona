@@ -7,7 +7,7 @@ Emoji Cache 單元測試
 import pytest
 from typing import Dict, Any, List
 from unittest.mock import Mock, patch
-from utils.emoji_cache import (
+from utils.input_emoji_cache import (
     EmojiImageCache,
     generate_cache_key,
     get_global_cache,

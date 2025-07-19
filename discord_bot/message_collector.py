@@ -15,7 +15,7 @@ from datetime import datetime
 from collections import OrderedDict
 
 from schemas.agent_types import MsgNode
-from schemas.config_types import EmojiStickerConfig
+from schemas.input_media_config import InputMediaConfig
 from discord_bot.message_manager import get_manager_instance
 from utils.image_processor import (
     parse_emoji_from_message,
@@ -29,7 +29,7 @@ from utils.image_processor import (
     # 保留舊的導入以維持相容性，但會產生 deprecation warning
     is_discord_gif_url,
 )
-from utils.emoji_cache import (
+from utils.input_emoji_cache import (
     get_global_cache,
     generate_cache_key,
     get_cache_stats,
@@ -186,7 +186,7 @@ async def collect_message(
     max_images: int = 4,
     max_messages: int = 10,
     httpx_client = None,
-    emoji_sticker_config: Optional[EmojiStickerConfig] = None
+    input_media_config: Optional[InputMediaConfig] = None
 ) -> CollectedMessages:
     """
     收集並處理訊息內容，建立對話歷史鏈
@@ -199,7 +199,7 @@ async def collect_message(
         max_images: 每條訊息的最大圖片數量
         max_messages: 歷史訊息的最大數量
         httpx_client: HTTP 客戶端（用於下載附件）
-        emoji_sticker_config: Emoji 和 Sticker 處理配置
+        input_media_config: 輸入媒體處理配置
     
     Returns:
         CollectedMessages: 包含處理後訊息和用戶警告的結構化資料
@@ -208,9 +208,9 @@ async def collect_message(
     user_warnings = set()
     curr_msg = new_msg
     
-    # 設定預設 emoji_sticker_config
-    if emoji_sticker_config is None:
-        emoji_sticker_config = EmojiStickerConfig()
+    # 設定預設 input_media_config
+    if input_media_config is None:
+        input_media_config = InputMediaConfig()
     
     # 取得 Discord 訊息管理器
     message_manager = get_manager_instance()
@@ -246,7 +246,7 @@ async def collect_message(
                 max_text, 
                 remaining_imgs_count, # 這裡的 remaining_imgs_count 在這個迴圈中不再是累計的，因為我們是獨立處理每個訊息的圖片限制
                 httpx_client,
-                emoji_sticker_config
+                input_media_config
             )
             
             if processed_msg and processed_msg.message_id not in all_processed_messages_map:
@@ -274,7 +274,7 @@ async def collect_message(
                     max_text, 
                     max_images, # 歷史訊息的圖片限制獨立計算
                     httpx_client,
-                    emoji_sticker_config
+                    input_media_config
                 )
                 if processed_msg and processed_msg.message_id not in all_processed_messages_map:
                     all_processed_messages_map[processed_msg.message_id] = processed_msg
@@ -375,7 +375,7 @@ async def _process_single_message(
     max_text: int,
     remaining_imgs_count: int,
     httpx_client,
-    emoji_sticker_config: EmojiStickerConfig
+    input_media_config: InputMediaConfig
 ) -> Optional[ProcessedMessage]:
     """處理單一訊息"""
     try:
@@ -395,13 +395,13 @@ async def _process_single_message(
             cleaned_content = f"{msg.author.mention} {msg.author.display_name}: {cleaned_content}"
         
         # 處理 Discord Stickers
-        sticker_images, sticker_stats = await _process_discord_stickers(msg, emoji_sticker_config)
+        sticker_images, sticker_stats = await _process_discord_stickers(msg, input_media_config)
         media_stats["sticker"] = sticker_stats["total"]
         media_stats["animated"] += sticker_stats["animated"]
         media_stats["static"] += sticker_stats["static"]
         
         # 處理訊息中的 Emoji
-        emoji_images, emoji_stats = await _process_emoji_from_message(msg, emoji_sticker_config)
+        emoji_images, emoji_stats = await _process_emoji_from_message(msg, input_media_config)
         media_stats["emoji"] = emoji_stats["total"]
         media_stats["animated"] += emoji_stats["animated"]
         media_stats["static"] += emoji_stats["static"]
@@ -475,7 +475,7 @@ async def _process_single_message(
                     # 使用新的圖片處理函數支援動畫
                     processed_frames, is_animated = await process_attachment_image(
                         att, 
-                        emoji_sticker_config.max_animated_frames if emoji_sticker_config.enable_animated_processing else 1,
+                        input_media_config.max_animated_frames if input_media_config.enable_animated_processing else 1,
                         httpx_client
                     )
                     
@@ -597,7 +597,7 @@ def _check_limits_and_add_warnings(
 
 async def _process_discord_stickers(
     msg: discord.Message,
-    config: EmojiStickerConfig
+    config: InputMediaConfig
 ) -> Tuple[List[Dict[str, Any]], Dict[str, int]]:
     """
     處理 Discord Sticker
@@ -705,7 +705,7 @@ async def _process_discord_stickers(
 
 async def _process_emoji_from_message(
     msg: discord.Message,
-    config: EmojiStickerConfig
+    config: InputMediaConfig
 ) -> Tuple[List[Dict[str, Any]], Dict[str, int]]:
     """
     處理訊息中的自定義 Emoji

@@ -14,7 +14,7 @@ import pytz
 import re
 from pathlib import Path
 
-from utils.config_loader import load_config, load_typed_config
+from utils.config_loader import load_typed_config
 from .message_handler import get_message_handler
 from schemas.config_types import AppConfig
 from event_scheduler.scheduler import EventScheduler
@@ -22,7 +22,7 @@ from event_scheduler.scheduler import EventScheduler
 # 導入 Wordle 相關功能
 from utils.wordle_service import get_wordle_service, WordleNotFound, WordleAPITimeout, WordleServiceError, safe_wordle_output
 from prompt_system.prompts import PromptSystem
-from prompt_system.emoji_handler import EmojiHandler
+from output_media.emoji_registry import EmojiRegistry
 from langchain_google_genai import ChatGoogleGenerativeAI
 from discord_bot.commands import register_commands
 
@@ -50,7 +50,7 @@ class DCPersonaBot(commands.Bot):
         # 初始化服務
         self.wordle_service = get_wordle_service()
         self.prompt_system = PromptSystem()
-        self.emoji_handler = EmojiHandler()
+        self.emoji_handler = EmojiRegistry()
         
         # 初始化 LLM（用於生成 Wordle 提示）
         self._init_wordle_llm()

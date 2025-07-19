@@ -24,10 +24,16 @@ DCPersona/
 ├── discord_bot/             # Discord 整合層
 │   ├── client.py            # Discord Client 初始化與設定
 │   ├── message_handler.py   # Discord 訊息事件處理主流程
-│   ├── message_collector.py # 訊息收集、歷史處理與多模態支援
+│   ├── message_collector.py # 訊息收集、歷史處理與多模態支援 (Input)
 │   ├── progress_manager.py  # Discord 進度消息管理系統
 │   ├── progress_adapter.py  # Discord 進度適配器（支援串流回應）
 │   └── message_manager.py   # Discord 訊息快取管理
+│
+├── output_media/            # ✨ 輸出媒體管線 (Output)
+│   ├── emoji_registry.py    # Emoji 註冊與格式化
+│   ├── sticker_registry.py  # Sticker 註冊 (預留)
+│   ├── context_builder.py   # 媒體提示上下文建構
+│   └── emoji_types.py       # Emoji 系統型別定義
 │
 ├── agent_core/              # 統一 Agent 處理引擎
 │   ├── graph.py             # LangGraph 構建與 Agent 節點實現
@@ -39,12 +45,11 @@ DCPersona/
 ├── schemas/                 # 型別安全資料架構
 │   ├── agent_types.py       # Agent 相關型別定義（狀態、計劃等）
 │   ├── config_types.py      # 完整的型別安全配置定義
-│   ├── emoji_types.py       # Emoji 系統型別定義（EmojiConfig）
+│   ├── input_media_config.py # ✨ 輸入媒體配置型別
 │   └── __init__.py
 │
 ├── prompt_system/           # 統一提示詞管理系統
 │   ├── prompts.py           # 核心提示詞功能與 PromptSystem
-│   ├── emoji_handler.py     # Emoji 處理器（智能建議與格式化）
 │   └── tool_prompts/        # 工具相關提示詞模板
 │       ├── wordle_hint_instructions.txt # Wordle 提示生成指令
 │       └── wordle_hint_types/           # 提示風格模板 (多個 .txt)
@@ -54,6 +59,7 @@ DCPersona/
 │   ├── logger.py            # 日誌系統設定
 │   ├── common_utils.py      # 通用輔助函式
 │   ├── image_processor.py   # 圖片 / Emoji / Sticker / 動畫處理核心
+│   ├── input_emoji_cache.py # ✨ 輸入 Emoji 快取
 │   ├── wordle_service.py    # Wordle 遊戲提示服務
 │   └── __init__.py
 │
@@ -84,17 +90,24 @@ DCPersona/
     *   `progress_adapter.py`: Discord 進度整合，實現統一訊息管理、智能串流支援、即時進度更新和多階段狀態指示。
     *   `message_manager.py`: 管理 Discord 訊息的快取和緩存，用於性能優化。
 
-5.  **`schemas/` - 型別安全資料架構**:
+5.  **`output_media/` - 輸出媒體管線**:
+    *   `emoji_registry.py`: 負責載入、驗證和格式化 Bot 回應中可用的 Emoji。
+    *   `sticker_registry.py`: 預留的 Sticker 管理介面。
+    *   `context_builder.py`: 整合來自不同註冊器的媒體資訊，為 LLM 生成統一的提示上下文。
+    *   `emoji_types.py`: 定義 `EmojiConfig`，用於解析 `emoji_config.yaml`。
+
+6.  **`schemas/` - 型別安全資料架構**:
     *   `config_types.py`: 定義所有配置的型別安全結構，確保嚴格型別檢查和配置驗證。
     *   `agent_types.py`: 定義 Agent 系統的核心資料結構，如 `OverallState`、`MsgNode`、`AgentPlan`、`ReminderDetails` 和 `ToolExecutionResult`。
-    *   `emoji_types.py`: 定義 Emoji 系統的型別安全資料結構，包含 `EmojiConfig` dataclass 和 YAML 配置載入功能。
+    *   `input_media_config.py`: 定義輸入媒體處理的配置。
 
-6.  **`prompt_system/` - 統一提示詞管理系統**:
+7.  **`prompt_system/` - 統一提示詞管理系統**:
     *   `prompts.py`: 管理核心提示詞功能和工具相關提示詞模板。
-    *   `emoji_handler.py`: Emoji 智能處理系統，提供配置驅動的 emoji 建議、驗證和格式化功能，支援伺服器特定和應用程式 emoji。
 
-7.  **`utils/` - 通用工具與配置**:
-    *   包含型別安全配置載入器、日誌系統設定、通用輔助函式，並以 `image_processor.py` 提供 Emoji、Sticker、GIF/APNG/WebP 動畫與 Embed 圖片的載入、取樣、尺寸調整與 Base64 轉換功能。
+8.  **`utils/` - 通用工具與配置**:
+    *   包含型別安全配置載入器、日誌系統設定、通用輔助函式。
+    *   `image_processor.py`: 提供 Emoji、Sticker、GIF/APNG/WebP 動畫與 Embed 圖片的載入、取樣、尺寸調整與 Base64 轉換功能。
+    *   `input_emoji_cache.py`: 負責快取已處理的輸入 Emoji，提升效能。
     * `wordle_service.py`: 提供 Wordle 每日答案查詢和提示生成後的安全處理功能。
 
 ---
@@ -105,13 +118,13 @@ DCPersona/
 
 1.  **訊息接收**: `message_handler.py` 接收 Discord 事件。
 2.  **權限檢查**: 驗證使用者權限和頻道設定。
-3.  **訊息收集**: `message_collector.py` 收集對話歷史和圖片等多模態內容。
-4.  **Agent 初始化**: 創建 `UnifiedAgent` 實例並配置進度觀察者，同時載入 `EmojiHandler` 提供 emoji 上下文。
-5.  **LangGraph 執行**: 執行 `generate_query_or_plan` → `execute_tools` → `reflection` → `finalize_answer` 流程，其中 `execute_tools` 節點會呼叫 LangChain 工具（如 `set_reminder`）。
-6.  **智能串流處理**: 在 `finalize_answer` 階段根據配置啟用串流回應，基於時間和內容長度智能更新。
-7.  **統一進度管理**: 透過 `DiscordProgressAdapter` 和 `ProgressManager` 統一處理所有 Discord 訊息操作。
-8.  **Emoji 提示**: 使用 `EmojiHandler` 在 LLM 提示中提供可用的 emoji 格式，LLM 直接生成正確的 Discord emoji 格式。
-9.  **結果回覆**: 將最終答案格式化後回覆到 Discord，支援串流和非串流兩種模式。
+3.  **訊息收集**: `message_collector.py` 使用 `InputMediaConfig` 和 `input_emoji_cache` 收集對話歷史和圖片等多模態內容。
+4.  **Agent 初始化**: 創建 `UnifiedAgent` 實例並配置進度觀察者。
+5.  **提示上下文建構**: 使用 `OutputMediaContextBuilder` 建構 emoji 和 sticker 的提示上下文，提供給 LLM。
+6.  **LangGraph 執行**: 執行 `generate_query_or_plan` → `execute_tools` → `reflection` → `finalize_answer` 流程。
+7.  **智能串流處理**: 在 `finalize_answer` 階段根據配置啟用串流回應。
+8.  **統一進度管理**: 透過 `DiscordProgressAdapter` 和 `ProgressManager` 統一處理所有 Discord 訊息操作。
+9.  **結果回覆**: 將最終答案格式化後回覆到 Discord。
 10. **提醒排程**: 若 Agent 執行 `set_reminder` 工具成功，`message_handler.py` 會從 Agent 狀態中提取 `ReminderDetails`，並將其傳遞給 `event_scheduler/scheduler.py` 進行排程。
 11. **提醒觸發**: 當 `event_scheduler/scheduler.py` 觸發提醒事件時，會呼叫 `message_handler.py` 中註冊的回調函數，該函數會建構一個模擬訊息，重新送回 Agent 處理以生成提醒內容，並最終發送至 Discord。
 

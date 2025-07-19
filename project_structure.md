@@ -25,10 +25,16 @@ DCPersona/
 │   ├── client.py            # Discord Client 初始化與設定
 │   ├── commands/            # Slash Command 定義 (自動掃描並集中註冊)
 │   ├── message_handler.py   # Discord 訊息事件處理主流程
-│   ├── message_collector.py # 訊息收集、歷史處理與多模態支援
+│   ├── message_collector.py # 訊息收集、歷史處理與多模態支援 (Input)
 │   ├── progress_manager.py  # Discord 進度消息管理系統
 │   ├── progress_adapter.py  # Discord 進度適配器（支援串流回應）
 │   └── message_manager.py   # Discord 訊息快取管理
+│
+├── output_media/            # ✨ 輸出媒體管線 (Output)
+│   ├── emoji_registry.py    # Emoji 註冊與格式化
+│   ├── sticker_registry.py  # Sticker 註冊 (預留)
+│   ├── context_builder.py   # 媒體提示上下文建構
+│   └── emoji_types.py       # Emoji 系統型別定義
 │
 ├── agent_core/              # **[核心]** 統一 Agent 處理引擎
 │   ├── graph.py             # LangGraph 構建與 Agent 節點實現
@@ -41,7 +47,7 @@ DCPersona/
 │   ├── agent_types.py       # Agent 相關型別定義（狀態、計劃等）
 │   ├── config_types.py      # 完整的型別安全配置定義
 │   ├── progress_types.py    # ProgressStage / ToolStatus 枚舉與符號映射，提供型別安全的進度階段
-│   ├── emoji_types.py       # **[新增]** Emoji 系統型別定義（EmojiConfig）
+│   ├── input_media_config.py # ✨ 輸入媒體配置型別
 │   └── __init__.py
 │
 ├── prompt_system/           # 統一提示詞管理系統
@@ -54,6 +60,7 @@ DCPersona/
 │   ├── logger.py            # 日誌系統設定
 │   ├── common_utils.py      # 通用輔助函式
 │   ├── image_processor.py   # 圖片 / Emoji / Sticker / 動畫處理核心
+│   ├── input_emoji_cache.py # ✨ 輸入 Emoji 快取
 │   ├── wordle_service.py    # Wordle 遊戲提示服務
 │   ├── youtube_utils.py     # YouTube URL 解析與工具輔助
 │   └── __init__.py

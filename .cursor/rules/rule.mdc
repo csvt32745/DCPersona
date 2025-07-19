@@ -9,6 +9,13 @@ alwaysApply: true
 - 任務開始前，請先向 user 確認 task list 和架構，確認後再進行
 - 請在任務結束後向 user 確認結果，之後再寫 test
 - test 請用 `python -m pytest` 來跑全部測試，包含 regression test，請務必把所有 test error 修復
+- 每個任務實作流程
+    1. 讀取 `task.md` 找對應任務和資料
+    2. 實作
+    3. 一個大型 Module 完成後，更新&跑一次對應測試
+    若因為後續未完成而無法進行測試，請註記在後續的任務裡面  當一個項目來進行
+    4. 更新 task.md
+    5. 繼續下個任務
 - 所有 doc 為 
   - 1. `README.md`: 對外簡述功能項、檔案架構
   - 2. `project_rules.md`: 開發概覽用的專案架構和職責，以及大架構的 Workflow

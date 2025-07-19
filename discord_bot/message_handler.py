@@ -21,7 +21,7 @@ from schemas.agent_types import OverallState, MsgNode, ReminderDetails, ToolExec
 from schemas.config_types import AppConfig, DiscordContextData
 from utils.config_loader import load_typed_config
 from prompt_system.prompts import get_prompt_system
-from prompt_system.emoji_handler import EmojiHandler
+from output_media.emoji_registry import EmojiRegistry
 from .progress_adapter import DiscordProgressAdapter
 from .progress_manager import get_progress_manager
 from .message_collector import collect_message, CollectedMessages
@@ -117,7 +117,7 @@ class DiscordMessageHandler:
                 max_images=self.config.discord.limits.max_images,
                 max_messages=self.config.discord.limits.max_messages,
                 httpx_client=self.httpx_client,
-                emoji_sticker_config=self.config.discord.emoji_sticker
+                input_media_config=self.config.discord.input_media
             )
             
             # 使用統一 Agent 進行處理，傳遞預先創建的 progress_adapter

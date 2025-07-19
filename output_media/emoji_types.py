@@ -98,5 +98,4 @@ class EmojiConfig:
             raise ValueError(f"配置檔案格式錯誤: {e}")
         except Exception as e:
             logger.error(f"載入 Emoji 配置失敗: {e}")
-            raise
-    
+            raise 

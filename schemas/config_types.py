@@ -11,6 +11,7 @@ import yaml
 import logging
 import os
 from dotenv import load_dotenv
+from .input_media_config import InputMediaConfig
 
 
 def _default_progress_messages() -> Dict[str, str]:
@@ -109,16 +110,7 @@ class DiscordPermissionsConfig:
     channels: Dict[str, List[int]] = field(default_factory=lambda: {"allowed_ids": [], "blocked_ids": []})
 
 
-@dataclass
-class EmojiStickerConfig:
-    """Emoji 和 Sticker 處理配置"""
-    max_emoji_per_message: int = 3
-    max_sticker_per_message: int = 2
-    max_animated_frames: int = 4
-    emoji_sticker_max_size: int = 256
-    enable_emoji_processing: bool = True
-    enable_sticker_processing: bool = True
-    enable_animated_processing: bool = True
+# EmojiStickerConfig 已移至 schemas/input_media_config.py 並重新命名為 InputMediaConfig
 
 
 @dataclass
@@ -146,7 +138,7 @@ class DiscordConfig:
     limits: DiscordLimitsConfig = field(default_factory=DiscordLimitsConfig)
     permissions: DiscordPermissionsConfig = field(default_factory=DiscordPermissionsConfig)
     maintenance: DiscordMaintenanceConfig = field(default_factory=DiscordMaintenanceConfig)
-    emoji_sticker: EmojiStickerConfig = field(default_factory=EmojiStickerConfig)
+    input_media: InputMediaConfig = field(default_factory=InputMediaConfig)
 
 
 @dataclass

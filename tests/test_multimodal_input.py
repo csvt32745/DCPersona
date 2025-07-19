@@ -19,7 +19,7 @@ from discord_bot.message_handler import DiscordMessageHandler
 from agent_core.graph import UnifiedAgent
 from utils.config_loader import load_typed_config
 from agent_core.agent_utils import _extract_text_content
-from schemas.config_types import EmojiStickerConfig
+from schemas.input_media_config import InputMediaConfig
 
 
 class TestMultimodalInput:
@@ -295,9 +295,9 @@ class TestMultimodalInput:
         return user
     
     @pytest.fixture
-    def emoji_sticker_config(self):
-        """創建 emoji sticker 配置"""
-        return EmojiStickerConfig(
+    def input_media_config(self):
+        """創建 input media 配置"""
+        return InputMediaConfig(
             max_emoji_per_message=2,
             max_sticker_per_message=1,
             max_animated_frames=3,
@@ -310,7 +310,7 @@ class TestMultimodalInput:
     @pytest.mark.asyncio
     async def test_emoji_processing_disabled(self, mock_discord_message_with_emoji, mock_discord_client_user):
         """測試 emoji 處理功能被禁用時的行為"""
-        config = EmojiStickerConfig(enable_emoji_processing=False)
+        config = InputMediaConfig(enable_emoji_processing=False)
         
         processed_msg = await _process_single_message(
             mock_discord_message_with_emoji,
@@ -318,7 +318,7 @@ class TestMultimodalInput:
             max_text=1000,
             remaining_imgs_count=5,
             httpx_client=None,
-            emoji_sticker_config=config
+            input_media_config=config
         )
         
         assert processed_msg is not None
@@ -330,7 +330,7 @@ class TestMultimodalInput:
     @pytest.mark.asyncio
     async def test_sticker_processing_disabled(self, mock_discord_message_with_stickers, mock_discord_client_user):
         """測試 sticker 處理功能被禁用時的行為"""
-        config = EmojiStickerConfig(enable_sticker_processing=False)
+        config = InputMediaConfig(enable_sticker_processing=False)
         
         processed_msg = await _process_single_message(
             mock_discord_message_with_stickers,
@@ -338,7 +338,7 @@ class TestMultimodalInput:
             max_text=1000,
             remaining_imgs_count=5,
             httpx_client=None,
-            emoji_sticker_config=config
+            input_media_config=config
         )
         
         assert processed_msg is not None
@@ -347,7 +347,7 @@ class TestMultimodalInput:
         assert "Check out this sticker!" in processed_msg.content
     
     @pytest.mark.asyncio
-    async def test_sticker_processing_enabled(self, mock_discord_message_with_stickers, mock_discord_client_user, emoji_sticker_config):
+    async def test_sticker_processing_enabled(self, mock_discord_message_with_stickers, mock_discord_client_user, input_media_config):
         """測試 sticker 處理功能啟用時的行為"""
         processed_msg = await _process_single_message(
             mock_discord_message_with_stickers,
@@ -355,7 +355,7 @@ class TestMultimodalInput:
             max_text=1000,
             remaining_imgs_count=5,
             httpx_client=None,
-            emoji_sticker_config=emoji_sticker_config
+            input_media_config=input_media_config
         )
         
         assert processed_msg is not None
@@ -372,7 +372,7 @@ class TestMultimodalInput:
                 assert "data:image/" in image_parts[0]["image_url"]["url"]
     
     @pytest.mark.asyncio
-    async def test_lottie_sticker_skipped(self, mock_discord_client_user, emoji_sticker_config):
+    async def test_lottie_sticker_skipped(self, mock_discord_client_user, input_media_config):
         """測試 Lottie 格式的 sticker 被正確跳過"""
         # 創建包含 Lottie sticker 的訊息
         msg = Mock()
@@ -401,7 +401,7 @@ class TestMultimodalInput:
             max_text=1000,
             remaining_imgs_count=5,
             httpx_client=None,
-            emoji_sticker_config=emoji_sticker_config
+            input_media_config=input_media_config
         )
         
         assert processed_msg is not None
@@ -410,8 +410,8 @@ class TestMultimodalInput:
         assert "Lottie sticker test" in processed_msg.content
     
     @pytest.mark.asyncio
-    async def test_collect_message_with_emoji_sticker_config(self, mock_discord_message_with_stickers, mock_discord_client_user, emoji_sticker_config):
-        """測試 collect_message 函數使用 emoji_sticker_config"""
+    async def test_collect_message_with_emoji_sticker_config(self, mock_discord_message_with_stickers, mock_discord_client_user, input_media_config):
+        """測試 collect_message 函數使用 input_media_config"""
         # 創建一個異步迭代器類
         class AsyncIterator:
             def __init__(self, items):
@@ -431,13 +431,13 @@ class TestMultimodalInput:
         # 模擬頻道歷史 - 返回空的異步迭代器
         mock_discord_message_with_stickers.channel.history = Mock(return_value=AsyncIterator([]))
         
-        # 調用 collect_message 並傳遞 emoji_sticker_config
+        # 調用 collect_message 並傳遞 input_media_config
         result = await collect_message(
             mock_discord_message_with_stickers,
             mock_discord_client_user,
             enable_conversation_history=True,
             httpx_client=None,
-            emoji_sticker_config=emoji_sticker_config
+            input_media_config=input_media_config
         )
         
         # 驗證結果
@@ -454,7 +454,7 @@ class TestMultimodalInput:
                 assert "data:image/" in image_parts[0]["image_url"]["url"]
 
     @pytest.mark.asyncio
-    async def test_animated_gif_attachment_processing(self, mock_discord_client_user, emoji_sticker_config):
+    async def test_animated_gif_attachment_processing(self, mock_discord_client_user, input_media_config):
         """測試動畫 GIF 附件處理"""
         # 創建包含 GIF 附件的訊息
         msg = Mock()
@@ -495,7 +495,7 @@ class TestMultimodalInput:
             max_text=1000,
             remaining_imgs_count=5,
             httpx_client=mock_httpx_client,
-            emoji_sticker_config=emoji_sticker_config
+            input_media_config=input_media_config
         )
         
         assert processed_msg is not None
@@ -514,7 +514,7 @@ class TestMultimodalInput:
     async def test_emoji_sticker_limits_respected(self, mock_discord_client_user):
         """測試 emoji 和 sticker 數量限制被正確遵守"""
         # 創建限制較小的配置
-        config = EmojiStickerConfig(
+        config = InputMediaConfig(
             max_emoji_per_message=1,
             max_sticker_per_message=1,
             enable_emoji_processing=True,
@@ -559,7 +559,7 @@ class TestMultimodalInput:
             max_text=1000,
             remaining_imgs_count=10,
             httpx_client=None,
-            emoji_sticker_config=config
+            input_media_config=config
         )
         
         assert processed_msg is not None
@@ -570,7 +570,7 @@ class TestMultimodalInput:
             assert len(image_parts) <= 2
     
     @pytest.mark.asyncio 
-    async def test_error_handling_in_processing(self, mock_discord_client_user, emoji_sticker_config):
+    async def test_error_handling_in_processing(self, mock_discord_client_user, input_media_config):
         """測試處理過程中的錯誤處理"""
         # 創建會導致錯誤的 sticker
         msg = Mock()
@@ -601,7 +601,7 @@ class TestMultimodalInput:
             max_text=1000,
             remaining_imgs_count=5,
             httpx_client=None,
-            emoji_sticker_config=emoji_sticker_config
+            input_media_config=input_media_config
         )
         
         assert processed_msg is not None
@@ -762,7 +762,7 @@ class TestMediaSummaryGeneration:
         mock_process_attachment.return_value = ([], True) # 模擬動畫附件
 
         result = await _process_single_message(
-            base_message, mock_client_user, 1000, 5, None, EmojiStickerConfig()
+            base_message, mock_client_user, 1000, 5, None, InputMediaConfig()
         )
 
         expected_summary = "[包含: 1個emoji, 1個sticker, 2個動畫]"
@@ -783,7 +783,7 @@ class TestMediaSummaryGeneration:
         mock_process_emoji.return_value = ([], {"total": 0, "animated": 0, "static": 0})
 
         result = await _process_single_message(
-            base_message, mock_client_user, 1000, 5, None, EmojiStickerConfig()
+            base_message, mock_client_user, 1000, 5, None, InputMediaConfig()
         )
 
         assert "[包含:" not in result.content
@@ -801,7 +801,7 @@ class TestMediaSummaryGeneration:
         mock_process_emoji.return_value = ([], {"total": 2, "animated": 1, "static": 1})
 
         result = await _process_single_message(
-            base_message, mock_client_user, 1000, 5, None, EmojiStickerConfig()
+            base_message, mock_client_user, 1000, 5, None, InputMediaConfig()
         )
 
         expected_summary = "[包含: 2個emoji, 1個動畫]"
@@ -822,12 +822,12 @@ class TestDiscordGifUrlProcessing:
         return user
     
     @pytest.fixture
-    def emoji_sticker_config(self):
-        """創建 emoji sticker 配置"""
-        return EmojiStickerConfig()
+    def input_media_config(self):
+        """創建 input media 配置"""
+        return InputMediaConfig()
     
     @pytest.mark.asyncio
-    async def test_message_with_discord_gif_url(self, mock_client_user, emoji_sticker_config):
+    async def test_message_with_discord_gif_url(self, mock_client_user, input_media_config):
         """測試包含 Discord GIF URL 的訊息處理（embed thumbnail 方式）"""
         # 創建包含 embed thumbnail GIF URL 的訊息
         msg = Mock()
@@ -874,7 +874,7 @@ class TestDiscordGifUrlProcessing:
             max_text=1000,
             remaining_imgs_count=5,
             httpx_client=mock_httpx_client,
-            emoji_sticker_config=emoji_sticker_config
+            input_media_config=input_media_config
         )
         
         assert processed_msg is not None
@@ -894,7 +894,7 @@ class TestDiscordGifUrlProcessing:
             assert "看看這個動畫很棒吧！" in processed_msg.content
     
     @pytest.mark.asyncio
-    async def test_message_with_multiple_discord_gif_urls(self, mock_client_user, emoji_sticker_config):
+    async def test_message_with_multiple_discord_gif_urls(self, mock_client_user, input_media_config):
         """測試包含多個 Discord GIF URL 的訊息處理"""
         msg = Mock()
         msg.id = 123456789
@@ -931,7 +931,7 @@ class TestDiscordGifUrlProcessing:
             max_text=1000,
             remaining_imgs_count=5,
             httpx_client=mock_httpx_client,
-            emoji_sticker_config=emoji_sticker_config
+            input_media_config=input_media_config
         )
         
         assert processed_msg is not None
@@ -954,7 +954,7 @@ class TestDiscordGifUrlProcessing:
             assert "普通連結" in text_content
     
     @pytest.mark.asyncio
-    async def test_discord_gif_url_with_real_attachments(self, mock_client_user, emoji_sticker_config):
+    async def test_discord_gif_url_with_real_attachments(self, mock_client_user, input_media_config):
         """測試 Discord GIF URL 與真實附件混合處理（embed thumbnail 方式）"""
         msg = Mock()
         msg.id = 123456789
@@ -1018,7 +1018,7 @@ class TestDiscordGifUrlProcessing:
             max_text=1000,
             remaining_imgs_count=5,
             httpx_client=mock_httpx_client,
-            emoji_sticker_config=emoji_sticker_config
+            input_media_config=input_media_config
         )
         
         assert processed_msg is not None
@@ -1037,7 +1037,7 @@ class TestDiscordGifUrlProcessing:
             assert len(image_parts) >= 1  # 至少有一張圖片被處理
     
     @pytest.mark.asyncio
-    async def test_discord_gif_url_image_limit_respected(self, mock_client_user, emoji_sticker_config):
+    async def test_discord_gif_url_image_limit_respected(self, mock_client_user, input_media_config):
         """測試 Discord GIF URL 遵守圖片數量限制"""
         msg = Mock()
         msg.id = 123456789
@@ -1074,7 +1074,7 @@ class TestDiscordGifUrlProcessing:
             max_text=1000,
             remaining_imgs_count=2,  # 只允許 2 張圖片
             httpx_client=mock_httpx_client,
-            emoji_sticker_config=emoji_sticker_config
+            input_media_config=input_media_config
         )
         
         assert processed_msg is not None
@@ -1085,7 +1085,7 @@ class TestDiscordGifUrlProcessing:
             assert len(image_parts) <= 2
     
     @pytest.mark.asyncio
-    async def test_discord_gif_url_download_failure(self, mock_client_user, emoji_sticker_config):
+    async def test_discord_gif_url_download_failure(self, mock_client_user, input_media_config):
         """測試 Discord GIF URL 下載失敗的處理（embed thumbnail 方式）"""
         msg = Mock()
         msg.id = 123456789
@@ -1126,7 +1126,7 @@ class TestDiscordGifUrlProcessing:
             max_text=1000,
             remaining_imgs_count=5,
             httpx_client=mock_httpx_client,
-            emoji_sticker_config=emoji_sticker_config
+            input_media_config=input_media_config
         )
         
         assert processed_msg is not None
@@ -1141,7 +1141,7 @@ class TestDiscordGifUrlProcessing:
             assert "失敗的 URL 測試" in processed_msg.content
     
     @pytest.mark.asyncio
-    async def test_media_summary_includes_url_gifs(self, mock_client_user, emoji_sticker_config):
+    async def test_media_summary_includes_url_gifs(self, mock_client_user, input_media_config):
         """測試媒體摘要包含 URL GIF（embed thumbnail 方式）"""
         msg = Mock()
         msg.id = 123456789
@@ -1192,7 +1192,7 @@ class TestDiscordGifUrlProcessing:
                 max_text=1000,
                 remaining_imgs_count=5,
                 httpx_client=mock_httpx_client,
-                emoji_sticker_config=emoji_sticker_config
+                input_media_config=input_media_config
             )
         
         assert processed_msg is not None
@@ -1223,9 +1223,9 @@ class TestExpandedEmbedProcessing:
         return user
     
     @pytest.fixture
-    def emoji_sticker_config(self):
-        """創建 emoji sticker 配置"""
-        return EmojiStickerConfig(
+    def input_media_config(self):
+        """創建 input media 配置"""
+        return InputMediaConfig(
             max_emoji_per_message=2,
             max_sticker_per_message=1,
             max_animated_frames=3,
@@ -1236,7 +1236,7 @@ class TestExpandedEmbedProcessing:
         )
     
     @pytest.mark.asyncio
-    async def test_embed_image_proxy_processing(self, mock_client_user, emoji_sticker_config):
+    async def test_embed_image_proxy_processing(self, mock_client_user, input_media_config):
         """測試 EmbedProxy 圖片處理"""
         # 創建包含 embed image 的訊息
         msg = Mock()
@@ -1286,7 +1286,7 @@ class TestExpandedEmbedProcessing:
             max_text=1000,
             remaining_imgs_count=5,
             httpx_client=mock_httpx_client,
-            emoji_sticker_config=emoji_sticker_config
+            input_media_config=input_media_config
         )
         
         assert processed_msg is not None
@@ -1302,7 +1302,7 @@ class TestExpandedEmbedProcessing:
             assert "data:image/" in image_parts[0]["image_url"]["url"]
     
     @pytest.mark.asyncio
-    async def test_mixed_thumbnail_and_image(self, mock_client_user, emoji_sticker_config):
+    async def test_mixed_thumbnail_and_image(self, mock_client_user, input_media_config):
         """測試同時包含 thumbnail 和 image 的 embed"""
         msg = Mock()
         msg.id = 123456789
@@ -1353,7 +1353,7 @@ class TestExpandedEmbedProcessing:
             max_text=1000,
             remaining_imgs_count=5,
             httpx_client=mock_httpx_client,
-            emoji_sticker_config=emoji_sticker_config
+            input_media_config=input_media_config
         )
         
         assert processed_msg is not None
@@ -1365,7 +1365,7 @@ class TestExpandedEmbedProcessing:
             assert len(image_parts) >= 1
     
     @pytest.mark.asyncio
-    async def test_video_url_skipped(self, mock_client_user, emoji_sticker_config):
+    async def test_video_url_skipped(self, mock_client_user, input_media_config):
         """測試影片 URL 被正確跳過"""
         msg = Mock()
         msg.id = 123456789
@@ -1404,7 +1404,7 @@ class TestExpandedEmbedProcessing:
             max_text=1000,
             remaining_imgs_count=5,
             httpx_client=None,
-            emoji_sticker_config=emoji_sticker_config
+            input_media_config=input_media_config
         )
         
         assert processed_msg is not None
@@ -1416,7 +1416,7 @@ class TestExpandedEmbedProcessing:
         assert "[包含:" not in processed_msg.content
     
     @pytest.mark.asyncio
-    async def test_unsupported_url_processed_anyway(self, mock_client_user, emoji_sticker_config):
+    async def test_unsupported_url_processed_anyway(self, mock_client_user, input_media_config):
         """測試不明格式的 URL 仍會嘗試處理（簡化邏輯）"""
         msg = Mock()
         msg.id = 123456789
@@ -1461,7 +1461,7 @@ class TestExpandedEmbedProcessing:
             max_text=1000,
             remaining_imgs_count=5,
             httpx_client=mock_httpx_client,
-            emoji_sticker_config=emoji_sticker_config
+            input_media_config=input_media_config
         )
         
         assert processed_msg is not None
@@ -1471,7 +1471,7 @@ class TestExpandedEmbedProcessing:
         assert "Unknown format content" in str(processed_msg.content)
     
     @pytest.mark.asyncio
-    async def test_external_domain_image_processing(self, mock_client_user, emoji_sticker_config):
+    async def test_external_domain_image_processing(self, mock_client_user, input_media_config):
         """測試外部域名圖片處理（無域名限制）"""
         msg = Mock()
         msg.id = 123456789
@@ -1521,7 +1521,7 @@ class TestExpandedEmbedProcessing:
             max_text=1000,
             remaining_imgs_count=5,
             httpx_client=mock_httpx_client,
-            emoji_sticker_config=emoji_sticker_config
+            input_media_config=input_media_config
         )
         
         assert processed_msg is not None
