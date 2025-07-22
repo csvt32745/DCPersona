@@ -27,6 +27,7 @@ from prompt_system.prompts import PromptSystem
 
 # EmojiRegistry 用於 emoji 輔助功能
 from output_media.emoji_registry import EmojiRegistry
+from output_media.context_builder import OutputMediaContextBuilder
 
 if TYPE_CHECKING:
     # 僅型別檢查時才導入，避免循環匯入
@@ -76,12 +77,14 @@ async def wordle_hint_command(
 
         # 2. 初始化 Emoji 支援
         emoji_context = ""
+        context_builder = None
         if bot.config.discord.input_media.enable_emoji_processing:  # 配置控制
             try:
                 emoji_registry = EmojiRegistry()
                 await emoji_registry.load_emojis(bot)
                 guild_id = interaction.guild.id if interaction.guild else None
                 emoji_context = emoji_registry.build_prompt_context(guild_id)
+                context_builder = OutputMediaContextBuilder(emoji_registry=emoji_registry)
                 logger.debug(f"已載入 Emoji 上下文，長度: {len(emoji_context)}")
             except Exception as e:
                 logger.warning(f"載入 Emoji 上下文失敗: {e}")
@@ -169,6 +172,11 @@ async def wordle_hint_command(
                 [{"role": "user", "content": prompt_template}]
             )
             hint_content = response.content
+            
+            # 修復 emoji 格式
+            if context_builder:
+                guild_id = interaction.guild.id if interaction.guild else None
+                hint_content = context_builder.parse_emoji_output(hint_content, guild_id)
 
             # 將 <think> 和 <check> 區塊轉為 Discord spoiler
             hint_content = re.sub(

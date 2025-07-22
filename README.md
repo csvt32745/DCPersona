@@ -72,6 +72,7 @@
   - **Input**: `message_collector` 結合 `InputMediaConfig` 和 `input_emoji_cache` 解析用戶訊息中的媒體。
   - **Output**: `output_media` 模組（`EmojiRegistry`, `OutputStickerRegistry`, `OutputMediaContextBuilder`）負責生成 Bot 回覆的媒體內容和提示上下文。
 - **智能 Emoji 輔助**: 配置驅動的 emoji 系統，根據伺服器上下文智能建議 emoji，LLM 直接生成正確的 Discord 格式，Wordle 提示功能也支援此功能，使提示更生動有趣。
+- **Emoji 防呆補償**: 自動修復 LLM 輸出的常見 emoji 格式錯誤，包含 `:name:` → `<:name:id>`、`<:name:>` → `<:name:id>`、`<a:name:>` → `<a:name:id>` 等格式，確保 Discord 能正確顯示 emoji。
 - **Embed Media 支援**: 自動偵測 `embed._thumbnail` / `embed.image` 的外部圖片 URL，封裝為 VirtualAttachment 與附件流程統一。
 - **媒體統計與摘要**: `message_collector` 會統計 emoji/sticker/靜態/動畫圖片數量並於訊息末尾附加 `[包含: ...]` 標記，`MULTIMODAL_GUIDANCE` 提示詞協助 LLM 解讀。
 - **文件處理**: 自動處理文字附件
@@ -199,7 +200,7 @@ DCPersona/
 ├── output_media/            # ✨ 輸出媒體管線 (Output)
 │   ├── emoji_registry.py    # Emoji 註冊與格式化
 │   ├── sticker_registry.py  # Sticker 註冊 (預留)
-│   ├── context_builder.py   # 媒體提示上下文建構
+│   ├── context_builder.py   # 媒體提示上下文建構 + Emoji 格式防呆補償
 │   └── emoji_types.py       # Emoji 系統型別定義
 │
 ├── agent_core/              # 統一 Agent 引擎

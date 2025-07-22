@@ -289,25 +289,49 @@ class TestEmojiHandler:
         assert "<:guild_emoji:111222333>" in context_with_guild
         assert "guild emoji 1" in context_with_guild
     
-    def test_format_emoji_output_no_emojis(self, emoji_handler):
-        """測試沒有 emoji 標記的文字格式化 - 現在此方法已移除"""
-        # 此測試已不再需要，因為 format_emoji_output 方法已移除
-        pass
-    
-    def test_format_emoji_output_with_valid_emojis(self, emoji_handler):
-        """測試有效 emoji 標記的格式化 - 現在此方法已移除"""
-        # 此測試已不再需要，因為 format_emoji_output 方法已移除
-        pass
-    
-    def test_format_emoji_output_invalid_emoji_id(self, emoji_handler):
-        """測試無效 emoji ID 的處理 - 現在此方法已移除"""
-        # 此測試已不再需要，因為 format_emoji_output 方法已移除
-        pass
-    
-    def test_format_emoji_output_mixed_valid_invalid(self, emoji_handler):
-        """測試混合有效和無效 emoji 的處理 - 現在此方法已移除"""
-        # 此測試已不再需要，因為 format_emoji_output 方法已移除
-        pass
+    def test_parse_emoji_output_via_context_builder(self, emoji_handler):
+        """測試通過 context_builder 修復 emoji 格式"""
+        from output_media.context_builder import OutputMediaContextBuilder
+        
+        # 設置測試 emoji
+        mock_emoji1 = Mock()
+        mock_emoji1.name = "uika_dog"
+        mock_emoji1.__str__ = Mock(return_value="<:uika_dog:123456789>")
+        
+        mock_emoji2 = Mock() 
+        mock_emoji2.name = "gura_1"
+        mock_emoji2.__str__ = Mock(return_value="<:gura_1:987654321>")
+        
+        mock_emoji3 = Mock()
+        mock_emoji3.name = "turtle_cry"
+        mock_emoji3.__str__ = Mock(return_value="<a:turtle_cry:111222333>")
+        
+        emoji_handler.available_emojis[-1] = {123456789: mock_emoji1}
+        emoji_handler.available_emojis[999888777] = {
+            987654321: mock_emoji2,
+            111222333: mock_emoji3
+        }
+        
+        context_builder = OutputMediaContextBuilder(emoji_registry=emoji_handler)
+        
+        # 測試各種錯誤格式
+        test_cases = [
+            # (:name: 格式)
+            (":uika_dog:", "<:uika_dog:123456789>"),
+            # (<:name:> 格式)  
+            ("<:gura_1:>", "<:gura_1:987654321>"),
+            # (<a:name:> 格式)
+            ("<a:turtle_cry:>", "<a:turtle_cry:111222333>"),
+            # 不存在的 emoji 保持原樣
+            (":unknown_emoji:", ":unknown_emoji:"),
+            ("<:unknown:>", "<:unknown:>"),
+            # 混合情況
+            ("Hello :uika_dog: and <:gura_1:>!", "Hello <:uika_dog:123456789> and <:gura_1:987654321>!"),
+        ]
+        
+        for input_text, expected in test_cases:
+            result = context_builder.parse_emoji_output(input_text, 999888777)
+            assert result == expected, f"輸入: {input_text}, 期望: {expected}, 實際: {result}"
     
     def test_get_stats(self, emoji_handler):
         """測試統計資訊獲取"""
@@ -328,14 +352,22 @@ class TestEmojiIntegration:
     """測試 emoji 系統整合"""
     
     @pytest.mark.asyncio
-    async def test_progress_adapter_emoji_formatting(self):
-        """測試 DiscordProgressAdapter 中的 emoji 格式化 - 現在不再需要格式化"""
+    async def test_progress_adapter_emoji_parsing(self):
+        """測試 DiscordProgressAdapter 中的 emoji 修復功能"""
         # 模擬 Discord 訊息
         mock_message = Mock()
         mock_message.guild.id = 999888777
         
-        # 模擬 EmojiHandler
+        # 模擬 EmojiRegistry 和 emoji
         mock_emoji_handler = Mock()
+        mock_emoji = Mock()
+        mock_emoji.name = "test"
+        mock_emoji.__str__ = Mock(return_value="<:test:123456789>")
+        
+        mock_emoji_handler.available_emojis = {
+            999888777: {123456789: mock_emoji},
+            -1: {}
+        }
         
         # 創建 DiscordProgressAdapter
         adapter = DiscordProgressAdapter(mock_message, mock_emoji_handler)
@@ -344,10 +376,10 @@ class TestEmojiIntegration:
         adapter.progress_manager = Mock()
         adapter.progress_manager.send_or_update_progress = AsyncMock()
         
-        # 測試 on_completion 中的 emoji 格式化
-        await adapter.on_completion("測試文字 <:test:123456789>", [])
+        # 測試 on_completion 中的 emoji 修復
+        await adapter.on_completion("測試文字 :test:", [])
         
-        # 驗證 emoji 直接傳遞，沒有呼叫 format_emoji_output
+        # 驗證 emoji 被修復
         adapter.progress_manager.send_or_update_progress.assert_called_once()
         call_args = adapter.progress_manager.send_or_update_progress.call_args
         assert call_args[1]["final_answer"] == "測試文字 <:test:123456789>"

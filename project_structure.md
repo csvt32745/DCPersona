@@ -33,7 +33,7 @@ DCPersona/
 ├── output_media/            # ✨ 輸出媒體管線 (Output)
 │   ├── emoji_registry.py    # Emoji 註冊與格式化
 │   ├── sticker_registry.py  # Sticker 註冊 (預留)
-│   ├── context_builder.py   # 媒體提示上下文建構
+│   ├── context_builder.py   # 媒體提示上下文建構 + Emoji 格式防呆補償
 │   └── emoji_types.py       # Emoji 系統型別定義
 │
 ├── agent_core/              # **[核心]** 統一 Agent 處理引擎
@@ -130,11 +130,12 @@ flowchart TD
 5. **LangGraph 執行**: 執行 `generate_query_or_plan` → `execute_tools` → `reflection` → `finalize_answer` 流程
 6. **智能串流處理**: 在 `finalize_answer` 階段根據配置啟用串流回應，基於時間和內容長度智能更新
 7. **統一進度管理**: 透過 `DiscordProgressAdapter` 和 `ProgressManager` 統一處理所有 Discord 訊息操作
-8. **結果回覆**: 將最終答案格式化後回覆到 Discord，支援串流和非串流兩種模式
-9. **提醒排程**:
+8. **Emoji 格式防呆補償**: `DiscordProgressAdapter` 在所有 final_answer 輸出階段，透過 `OutputMediaContextBuilder.parse_emoji_output()` 自動修復 LLM 輸出的常見 emoji 格式錯誤
+9. **結果回覆**: 將最終答案格式化後回覆到 Discord，支援串流和非串流兩種模式
+10. **提醒排程**:
     - 若 Agent 執行 `set_reminder` 工具成功，`message_handler.py` 會從 Agent 狀態中提取 `ReminderDetails`。
     - 將 `ReminderDetails` 傳遞給 `EventScheduler` 進行排程。
-10. **提醒觸發**:
+11. **提醒觸發**:
     - `EventScheduler` 觸發事件時，會呼叫 `message_handler.py` 中註冊的回調。
     - 回調函數會建構一個模擬的 `MsgNode`，並重新送回 Agent 處理，以生成提醒訊息。
 
@@ -185,8 +186,9 @@ flowchart TD
 4.  **獲取答案**: 呼叫 `utils/wordle_service.py` 中的 `WordleService` 從 NYT API 獲取指定日期的 Wordle 答案。若 API 請求失敗則向使用者回覆錯誤訊息。
 5.  **提示詞生成**: 使用 `PromptSystem` 載入 `wordle_hint_instructions.txt` 模板，並從 `prompt_system/tool_prompts/wordle_hint_types/` 隨機注入一種提示風格，再填入答案和 Persona 風格。
 6.  **LLM 呼叫**: 呼叫 LLM 模型生成創意提示。
-7.  **安全後處理**: 使用 `safe_wordle_output` 函數確保 LLM 的回覆包含 Discord Spoiler Tag (`||...||`)。
-8.  **回覆使用者**: 將最終提示回覆到 Discord 頻道（由 `wordle_hint_command` 直接調用 `interaction.followup.send()`）。
+7.  **Emoji 格式修復**: 使用 `OutputMediaContextBuilder.parse_emoji_output()` 修復 LLM 輸出中的 emoji 格式錯誤。
+8.  **安全後處理**: 使用 `safe_wordle_output` 函數確保 LLM 的回覆包含 Discord Spoiler Tag (`||...||`)。
+9.  **回覆使用者**: 將最終提示回覆到 Discord 頻道（由 `wordle_hint_command` 直接調用 `interaction.followup.send()`）。
 
 ---
 
@@ -261,6 +263,7 @@ flowchart TD
 - **多階段支援**: 支援 starting、searching、analyzing、streaming、completed 等多種階段
 - **狀態指示**: 使用表情符號和 embed 格式指示不同處理階段
 - **錯誤處理**: 優雅處理網路異常和API限制，自動回退機制
+- **Emoji 格式防呆補償**: 透過 `OutputMediaContextBuilder.parse_emoji_output()` 自動修復 LLM 輸出的常見 emoji 格式錯誤
 
 #### `message_manager.py` - Discord 訊息快取管理
 管理 Discord 訊息的快取和緩存：
@@ -375,6 +378,7 @@ DCPersona 包含一個智能 emoji 輔助系統，能夠根據伺服器上下文
 - **直接格式**: LLM 直接生成正確的 Discord emoji 格式
 - **異步載入**: Bot 啟動時異步驗證 emoji 可用性
 - **快速處理**: 提供 prompt context 給 LLM，無需格式化步驟
+- **Emoji 格式防呆補償**: 自動修復 LLM 輸出的常見 emoji 格式錯誤，包含 `:name:` → `<:name:id>`、`<:name:>` → `<:name:id>`、`<a:name:>` → `<a:name:id>` 等格式
 
 ### 架構組件
 
@@ -397,16 +401,26 @@ class EmojiConfig:
 - emoji ID 型別轉換和驗證
 - 配置錯誤容錯處理
 
-#### `prompt_system/emoji_handler.py` - 核心處理器
+#### `output_media/emoji_registry.py` - 核心處理器
 實現 Emoji 系統的核心邏輯：
 
 ```python
-class EmojiHandler:
+class EmojiRegistry:
     async def load_emojis(self, client: discord.Client) -> None:
         # 異步載入和驗證所有 emoji
         
     def build_prompt_context(self, guild_id: Optional[int] = None) -> str:
         # 生成 LLM 提示上下文，包含可用的 emoji 格式
+```
+
+#### `output_media/context_builder.py` - 統一媒體上下文建構器
+整合 Emoji 和 Sticker 的提示上下文，並提供 Emoji 格式防呆補償：
+
+```python
+class OutputMediaContextBuilder:
+    def parse_emoji_output(self, text: str, guild_id: Optional[int] = None) -> str:
+        # 修復 LLM 輸出的錯誤 emoji 格式
+        # 支援 :name:, <:name:>, <a:name:> 等格式修復
 ```
 
 **主要功能**:
@@ -415,6 +429,7 @@ class EmojiHandler:
 - **直接格式提供**: 在 prompt 中直接提供 `<:emoji_name:123456789>` 格式
 - **優先級處理**: 伺服器 emoji 優先於應用程式 emoji
 - **統計資訊**: 提供 emoji 載入統計和診斷資訊
+- **Emoji 格式修復**: 自動修復 LLM 輸出中的常見 emoji 格式錯誤，支援精確名稱匹配和優先級排序
 
 #### `emoji_config.yaml` - 配置文件
 管理 emoji 的配置：
@@ -455,16 +470,24 @@ def _prepare_agent_state(self, collected_messages, original_message):
 ```python
 # discord_bot/progress_adapter.py
 async def on_completion(self, final_result: str, sources: Optional[List[Dict]] = None):
-    # emoji 處理已不需要，因為 LLM 直接生成正確格式
-    formatted_result = final_result
+    # 修復 emoji 格式
+    formatted_result = self._parse_emoji_output(final_result)
+    
+def _parse_emoji_output(self, text: str) -> str:
+    # 透過 OutputMediaContextBuilder 統一修復 emoji 格式錯誤
+    if not self.context_builder:
+        return text
+    guild_id = self.original_message.guild.id if self.original_message.guild else None
+    return self.context_builder.parse_emoji_output(text, guild_id)
 ```
 
 ### 測試覆蓋
 `tests/test_emoji_system.py` 包含 21 項綜合測試：
 
 - **EmojiConfig 測試**: YAML 載入、錯誤處理、型別轉換
-- **EmojiHandler 測試**: emoji 載入、上下文生成、格式化功能  
-- **整合測試**: Discord 進度適配器整合、串流支援
+- **EmojiRegistry 測試**: emoji 載入、上下文生成、格式化功能  
+- **OutputMediaContextBuilder 測試**: emoji 格式修復、精確名稱匹配、優先級處理
+- **整合測試**: Discord 進度適配器整合、串流支援、Wordle 指令 emoji 修復
 - **真實場景測試**: 使用真實 emoji 配置的端到端測試
 
 ### 使用範例
@@ -485,7 +508,18 @@ Emoji 使用說明：
 #### 直接使用
 ```text
 LLM 直接生成: "這真是太棒了 <:kawaii:1362820638489972937>！"
-無需額外格式化步驟
+```
+
+#### Emoji 格式防呆補償範例
+```text
+LLM 錯誤輸出: "這真是太棒了 :kawaii:！"
+自動修復為: "這真是太棒了 <:kawaii:1362820638489972937>！"
+
+LLM 錯誤輸出: "看看這個 <:turtle_smug:>！"
+自動修復為: "看看這個 <:turtle_smug:959699262587928586>！"
+
+LLM 錯誤輸出: "動畫效果 <a:spinning:>！"
+自動修復為: "動畫效果 <a:spinning:123456789>！"
 ```
 
 ---

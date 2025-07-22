@@ -288,7 +288,8 @@ This architecture enables a highly modular, type-safe, and extensible Discord AI
 ## DCPersona Development Guidelines
 
 ### 開發原則
-- 採用型別安全的配置系統，避免字串 key 存取
+- 禁止千萬絕對一律不要搞向後相容 這是讓 code 髒亂的第一步\
+- 採用型別安全的配置系統，避免字串 key 存取 (hasattr, getattr, setattr 都是禁用 function)
 - 使用 LangChain 工具系統 (`@tool` decorator) 實現工具整合  
 - 遵循觀察者模式進行進度管理
 - 支援多模態輸入處理（文字、圖片、emoji、sticker、動畫）

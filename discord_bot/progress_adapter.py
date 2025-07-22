@@ -16,6 +16,7 @@ from schemas.agent_types import DiscordProgressUpdate, ResearchSource
 from .progress_manager import get_progress_manager
 from utils.config_loader import load_typed_config
 from output_media.emoji_registry import EmojiRegistry
+from output_media.context_builder import OutputMediaContextBuilder
 
 
 class DiscordProgressAdapter(ProgressObserver):
@@ -39,6 +40,11 @@ class DiscordProgressAdapter(ProgressObserver):
         self.logger = logging.getLogger(__name__)
         self.config = load_typed_config()
         
+        # 建立 context builder（如果有 emoji_handler）
+        self.context_builder = None
+        if emoji_handler:
+            self.context_builder = OutputMediaContextBuilder(emoji_registry=emoji_handler)
+        
         # 追蹤最後發送的進度訊息
         self._last_progress_message: Optional[discord.Message] = None
         
@@ -53,6 +59,14 @@ class DiscordProgressAdapter(ProgressObserver):
         # tool_name -> status (使用 ToolStatus enum)
         self.tool_states: Dict[str, ToolStatus] = {}
         self._last_tool_update = 0.0  # 最後一次工具進度渲染時間
+    
+    def _parse_emoji_output(self, text: str) -> str:
+        """統一的 emoji 輸出修復"""
+        if not self.context_builder:
+            return text
+        
+        guild_id = self.original_message.guild.id if self.original_message.guild else None
+        return self.context_builder.parse_emoji_output(text, guild_id)
         
     async def on_progress_update(self, event: ProgressEvent) -> None:
         """處理進度更新事件
@@ -175,9 +189,8 @@ class DiscordProgressAdapter(ProgressObserver):
                         progress_percentage=100
                     )
                     
-                    # 格式化 emoji 輸出
-                    formatted_content = self._streaming_content
-                    # emoji 處理已不需要，因為 LLM 直接生成正確格式
+                    # 修復 emoji 格式
+                    formatted_content = self._parse_emoji_output(self._streaming_content)
                     
                     await self.progress_manager.send_or_update_progress(
                         original_message=self.original_message,
@@ -198,7 +211,8 @@ class DiscordProgressAdapter(ProgressObserver):
             if len(display_content) > 1800:
                 display_content = display_content[:1800] + "..."
             
-            # emoji 處理已不需要，因為 LLM 直接生成正確格式
+            # 修復 emoji 格式
+            parsed_content = self._parse_emoji_output(display_content)
             
             # 使用 progress_manager 更新串流進度
             streaming_progress = DiscordProgressUpdate(
@@ -211,7 +225,7 @@ class DiscordProgressAdapter(ProgressObserver):
             result_message = await self.progress_manager.send_or_update_progress(
                 original_message=self.original_message,
                 progress=streaming_progress,
-                final_answer=display_content + " ⚪"  # 串流指示器
+                final_answer=parsed_content + " ⚪"  # 串流指示器
             )
             
             # 記錄串流訊息以便後續更新
@@ -264,8 +278,8 @@ class DiscordProgressAdapter(ProgressObserver):
                     for source in sources[:5]  # 限制最多5個來源
                 ]
             
-            # emoji 處理已不需要，因為 LLM 直接生成正確格式
-            formatted_result = final_result
+            # 修復 emoji 格式
+            formatted_result = self._parse_emoji_output(final_result)
             
             # 發送完成更新
             await self.progress_manager.send_or_update_progress(

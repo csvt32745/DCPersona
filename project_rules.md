@@ -32,7 +32,7 @@ DCPersona/
 ├── output_media/            # ✨ 輸出媒體管線 (Output)
 │   ├── emoji_registry.py    # Emoji 註冊與格式化
 │   ├── sticker_registry.py  # Sticker 註冊 (預留)
-│   ├── context_builder.py   # 媒體提示上下文建構
+│   ├── context_builder.py   # 媒體提示上下文建構 + Emoji 格式防呆補償
 │   └── emoji_types.py       # Emoji 系統型別定義
 │
 ├── agent_core/              # 統一 Agent 處理引擎
@@ -93,7 +93,7 @@ DCPersona/
 5.  **`output_media/` - 輸出媒體管線**:
     *   `emoji_registry.py`: 負責載入、驗證和格式化 Bot 回應中可用的 Emoji。
     *   `sticker_registry.py`: 預留的 Sticker 管理介面。
-    *   `context_builder.py`: 整合來自不同註冊器的媒體資訊，為 LLM 生成統一的提示上下文。
+    *   `context_builder.py`: 整合來自不同註冊器的媒體資訊，為 LLM 生成統一的提示上下文，並包含 `parse_emoji_output()` 方法，提供 Emoji 格式防呆補償功能。
     *   `emoji_types.py`: 定義 `EmojiConfig`，用於解析 `emoji_config.yaml`。
 
 6.  **`schemas/` - 型別安全資料架構**:
@@ -124,9 +124,10 @@ DCPersona/
 6.  **LangGraph 執行**: 執行 `generate_query_or_plan` → `execute_tools` → `reflection` → `finalize_answer` 流程。
 7.  **智能串流處理**: 在 `finalize_answer` 階段根據配置啟用串流回應。
 8.  **統一進度管理**: 透過 `DiscordProgressAdapter` 和 `ProgressManager` 統一處理所有 Discord 訊息操作。
-9.  **結果回覆**: 將最終答案格式化後回覆到 Discord。
-10. **提醒排程**: 若 Agent 執行 `set_reminder` 工具成功，`message_handler.py` 會從 Agent 狀態中提取 `ReminderDetails`，並將其傳遞給 `event_scheduler/scheduler.py` 進行排程。
-11. **提醒觸發**: 當 `event_scheduler/scheduler.py` 觸發提醒事件時，會呼叫 `message_handler.py` 中註冊的回調函數，該函數會建構一個模擬訊息，重新送回 Agent 處理以生成提醒內容，並最終發送至 Discord。
+9.  **Emoji 格式防呆補償**: `DiscordProgressAdapter` 在所有 final_answer 輸出階段，透過 `OutputMediaContextBuilder.parse_emoji_output()` 自動修復 LLM 輸出的常見 emoji 格式錯誤。
+10. **結果回覆**: 將最終答案格式化後回覆到 Discord。
+11. **提醒排程**: 若 Agent 執行 `set_reminder` 工具成功，`message_handler.py` 會從 Agent 狀態中提取 `ReminderDetails`，並將其傳遞給 `event_scheduler/scheduler.py` 進行排程。
+12. **提醒觸發**: 當 `event_scheduler/scheduler.py` 觸發提醒事件時，會呼叫 `message_handler.py` 中註冊的回調函數，該函數會建構一個模擬訊息，重新送回 Agent 處理以生成提醒內容，並最終發送至 Discord。
 
 ### Slash Command 工作流程 (`/wordle_hint`)
 1.  **指令觸發**: 使用者在 Discord 中執行 `/wordle_hint` 命令，可選擇性提供 `date` 參數。
@@ -138,8 +139,9 @@ DCPersona/
     - 使用 `prompt_system/prompts.py` 中的 `PromptSystem` 載入 `wordle_hint_instructions.txt` 提示詞模板。
     - 將 Wordle 答案和 Persona 風格填入模板。
 6.  **LLM 呼叫**: 實例化一個獨立的 `ChatGoogleGenerativeAI` 模型，並傳入格式化後的提示詞以生成創意提示。
-7.  **安全後處理**: 使用 `utils/wordle_service.py` 中的 `safe_wordle_output` 函數，確保 LLM 的回覆包含 Discord Spoiler Tag (`||...||`)，並符合輸出格式。
-8.  **回覆使用者**: 將包含 Spoiler Tag 的最終提示回覆到 Discord 頻道。
+7.  **Emoji 格式修復**: 使用 `OutputMediaContextBuilder.parse_emoji_output()` 修復 LLM 輸出中的 emoji 格式錯誤。
+8.  **安全後處理**: 使用 `utils/wordle_service.py` 中的 `safe_wordle_output` 函數，確保 LLM 的回覆包含 Discord Spoiler Tag (`||...||`)，並符合輸出格式。
+9.  **回覆使用者**: 將包含 Spoiler Tag 的最終提示回覆到 Discord 頻道。
 
 ### CLI 工作流程
 

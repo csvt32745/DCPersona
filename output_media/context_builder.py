@@ -6,6 +6,7 @@
 """
 
 import logging
+import re
 from typing import Optional, List, Dict, Any
 from .emoji_registry import EmojiRegistry
 from .sticker_registry import OutputStickerRegistry
@@ -179,3 +180,75 @@ class OutputMediaContextBuilder:
                 return True
         
         return False 
+    
+    def parse_emoji_output(self, text: str, guild_id: Optional[int] = None) -> str:
+        """
+        修復 LLM 輸出的錯誤 emoji 格式
+        
+        Args:
+            text: 要修復的文字內容
+            guild_id: 可選的伺服器 ID
+            
+        Returns:
+            str: 修復後的文字內容
+        """
+        if not self.emoji_registry:
+            return text
+            
+        # 先修復 <:name:> → <:name:id> 和 <a:name:> → <a:name:id>
+        text = re.sub(r'<(a?):([a-zA-Z0-9_]+):>', 
+                      lambda m: self._fix_missing_id(m.group(1), m.group(2), guild_id), text)
+        
+        # 再修復 :name: → <:name:id>（使用更簡單的方法避免已經在 <> 中的）
+        # 先暫時替換正確的 emoji 格式
+        placeholders = []
+        def preserve_correct_emojis(match):
+            placeholder = f"__EMOJI_PLACEHOLDER_{len(placeholders)}__"
+            placeholders.append(match.group(0))
+            return placeholder
+        
+        # 暫存正確的 emoji 格式
+        text = re.sub(r'<a?:[a-zA-Z0-9_]+:\d+>', preserve_correct_emojis, text)
+        
+        # 修復簡單的 :name: 格式
+        text = re.sub(r':([a-zA-Z0-9_]+):', 
+                      lambda m: self._fix_simple_emoji(m.group(1), guild_id), text)
+        
+        # 恢復正確的 emoji 格式
+        for i, placeholder in enumerate(placeholders):
+            text = text.replace(f"__EMOJI_PLACEHOLDER_{i}__", placeholder)
+        return text
+
+    def _fix_simple_emoji(self, name: str, guild_id: Optional[int]) -> str:
+        """修復簡單的 :name: 格式"""
+        emoji_str = self._find_emoji_exact_match(name, guild_id)
+        return emoji_str if emoji_str else f':{name}:'
+
+    def _fix_missing_id(self, animated: str, name: str, guild_id: Optional[int]) -> str:
+        """修復缺少 ID 的格式"""
+        emoji_str = self._find_emoji_exact_match(name, guild_id)
+        return emoji_str if emoji_str else f'<{animated}:{name}:>'
+
+    def _find_emoji_exact_match(self, name: str, guild_id: Optional[int]) -> Optional[str]:
+        """
+        精確匹配 emoji 名稱
+        
+        Args:
+            name: emoji 名稱
+            guild_id: 可選的伺服器 ID
+            
+        Returns:
+            Optional[str]: 找到的 emoji 字串或 None
+        """
+        # 優先伺服器 emoji
+        if guild_id and guild_id in self.emoji_registry.available_emojis:
+            for emoji_obj in self.emoji_registry.available_emojis[guild_id].values():
+                if emoji_obj.name.lower() == name.lower():
+                    return str(emoji_obj)
+        
+        # 應用程式 emoji  
+        for emoji_obj in self.emoji_registry.available_emojis.get(-1, {}).values():
+            if emoji_obj.name.lower() == name.lower():
+                return str(emoji_obj)
+        
+        return None
