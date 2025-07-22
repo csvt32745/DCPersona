@@ -18,6 +18,14 @@
    - 針對提示的每一句話，明確說明其與答案 {solution} 的關聯性，以驗證提示的品質。
    </check>
 
+## Emoji 輔助表達
+{emoji_context}
+
+使用說明：
+- 適當使用提供的 emoji 來增強提示的表達力
+- 保持提示的核心邏輯不變
+- Emoji 應該輔助理解，而非干擾謎題
+
 ## Persona 風格
 當前 persona 風格：{persona_style}
 請根據這個風格調整你的語氣、用詞和表達方式。

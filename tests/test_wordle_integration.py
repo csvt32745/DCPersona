@@ -136,7 +136,8 @@ class TestWordlePromptSystem:
             "wordle_hint_instructions",
             solution="REACT",
             persona_style="友善且有趣",
-            hint_style_description=hint_style_description
+            hint_style_description=hint_style_description,
+            emoji_context=""  # 新增必要的 emoji_context 參數
         )
         
         assert "REACT" in formatted_prompt
@@ -210,6 +211,85 @@ class TestWordleSlashCommandIntegration:
             # 驗證服務被初始化
             mock_wordle_service.assert_called_once()
             mock_prompt_system.assert_called_once()
+
+
+class TestWordleEmojiIntegration:
+    """測試 Wordle Emoji 整合功能"""
+    
+    def test_wordle_hint_instructions_with_emoji_context(self):
+        """測試提示詞模板包含 emoji 上下文"""
+        prompt_system = PromptSystem()
+        
+        # 模擬 emoji 上下文
+        emoji_context = """
+**可用的應用程式 Emoji:**
+- <:thinking:123456789> - 思考中的表情
+- <:happy:123456790> - 開心的表情
+"""
+        
+        formatted_prompt = prompt_system.get_tool_prompt(
+            "wordle_hint_instructions",
+            solution="REACT",
+            persona_style="友善且有趣",
+            hint_style_description="測試風格描述",
+            emoji_context=emoji_context
+        )
+        
+        # 驗證 emoji 上下文被正確注入
+        assert "思考中的表情" in formatted_prompt
+        assert "開心的表情" in formatted_prompt
+        assert "Emoji 輔助表達" in formatted_prompt
+        assert "適當使用提供的 emoji" in formatted_prompt
+    
+    def test_wordle_hint_instructions_empty_emoji_context(self):
+        """測試空 emoji 上下文的處理"""
+        prompt_system = PromptSystem()
+        
+        formatted_prompt = prompt_system.get_tool_prompt(
+            "wordle_hint_instructions",
+            solution="REACT",
+            persona_style="友善且有趣",
+            hint_style_description="測試風格描述",
+            emoji_context=""  # 空的 emoji 上下文
+        )
+        
+        # 即使 emoji_context 為空，提示詞仍應正常工作
+        assert "REACT" in formatted_prompt
+        assert "友善且有趣" in formatted_prompt
+        assert "Emoji 輔助表達" in formatted_prompt
+    
+    @pytest.mark.asyncio
+    async def test_emoji_registry_integration(self):
+        """測試 EmojiRegistry 基本整合（獨立測試）"""
+        from output_media.emoji_registry import EmojiRegistry
+        
+        # 創建 EmojiRegistry 實例
+        registry = EmojiRegistry("emoji_config-example.yaml")
+        
+        # 測試配置載入
+        assert registry.config is not None
+        assert hasattr(registry, 'available_emojis')
+        assert hasattr(registry, 'emoji_lookup')
+        
+        # 測試空 guild_id 的情況
+        context = registry.build_prompt_context(None)
+        assert isinstance(context, str)  # 應該返回字符串（可能為空）
+    
+    @pytest.mark.asyncio
+    async def test_emoji_context_error_handling(self):
+        """測試 emoji 上下文錯誤處理"""
+        from output_media.emoji_registry import EmojiRegistry
+        
+        # 測試不存在的配置文件
+        registry = EmojiRegistry("nonexistent_config.yaml")
+        
+        # 應該能正常創建但配置為空
+        assert registry.config.application == {}
+        assert registry.config.guilds == {}
+        
+        # build_prompt_context 應該返回空字符串
+        context = registry.build_prompt_context(12345)
+        assert context == ""
 
 
 if __name__ == "__main__":

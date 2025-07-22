@@ -165,15 +165,17 @@ flowchart TD
 
 ```mermaid
 flowchart TD
-    A[使用者執行 /wordle_hint] --> B[discord_bot/commands/wordle_hint.py]
-    B --> C{解析日期 (可選)}
-    C --> D[utils/wordle_service.py<br>獲取 Wordle 答案]
-    D --> |成功| E[prompt_system/prompts.py<br>載入提示詞模板]
-    D --> |失敗: 404/Timeout| F[回覆錯誤訊息]
-    E --> G[呼叫 LLM 生成提示]
-    G --> H[utils/wordle_service.py<br>safe_wordle_output<br>確保 Spoiler Tag]
-    H --> I[register_commands()<br>集中註冊到 Bot]
-    I --> J[Discord 回覆提示]
+    A["/wordle_hint 指令觸發"] --> B["wordle_hint_command
+(discord_bot/commands/wordle_hint.py)"]
+    B --> C{日期參數?}
+    C -- 無效格式 --> X["回覆日期格式錯誤"]
+    C -- 有效或預設 --> C1["載入 Emoji 上下文"]
+    C1 --> D["WordleService.fetch_solution"]
+    D -- 404 / Timeout --> Y["回覆 API 失敗/超時"]
+    D -- 取得答案 --> E["生成提示詞"]
+    E --> F["LLM 產生提示"]
+    F --> G["safe_wordle_output 處理 spoiler"]
+    G --> H["interaction.followup.send"]
 ```
 
 **詳細步驟說明**:
@@ -280,11 +282,14 @@ flowchart TD
 - **檔案**: `discord_bot/commands/wordle_hint.py`
 - **流程摘要**:
   1. 解析日期參數（預設取當前時區日期）。
-  2. 使用 `WordleService.fetch_solution` 取得 Wordle 答案。
-  3. 透過 `PromptSystem.get_tool_prompt` 注入隨機提示風格與 persona 後生成提示詞。
-  4. 呼叫 LLM 生成提示，並使用 `safe_wordle_output` 確保 Spoiler Tag。
-  5. 透過 `interaction.followup.send()` 回覆 Discord 訊息。
-- **相關測試**: `tests/test_wordle_integration.py`, `tests/test_actual_discord_usage.py`
+  2. 導入 `EmojiRegistry` 並在適當位置初始化和載入 emoji 上下文。
+  3. 使用 `WordleService.fetch_solution` 取得 Wordle 答案。
+  4. 透過 `PromptSystem.get_tool_prompt` 注入隨機提示風格、persona 和 `emoji_context` 後生成提示詞。
+  5. 呼叫 LLM 生成提示，並使用 `safe_wordle_output` 確保 Spoiler Tag。
+6.  **完整的錯誤處理和降級邏輯**: 如果 emoji 載入失敗或功能被禁用，會自動降級到無 emoji 模式，不影響核心 Wordle 功能。
+7.  **配置驅動的功能控制**: 功能可透過 `enable_emoji_processing` 配置選項進行控制。
+8.  **透過 `interaction.followup.send()` 回覆 Discord 訊息**。
+- **相關測試**: `tests/test_wordle_integration.py` (新增了 4 個測試案例涵蓋 emoji 整合功能，並修復了現有測試的參數相容性), `tests/test_actual_discord_usage.py`
 
 ### schemas/ - 型別安全架構
 

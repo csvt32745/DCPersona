@@ -25,6 +25,9 @@ from utils.wordle_service import (
 # PromptSystem 用於取得 persona 與提示模板
 from prompt_system.prompts import PromptSystem
 
+# EmojiRegistry 用於 emoji 輔助功能
+from output_media.emoji_registry import EmojiRegistry
+
 if TYPE_CHECKING:
     # 僅型別檢查時才導入，避免循環匯入
     from discord_bot.client import DCPersonaBot
@@ -71,7 +74,19 @@ async def wordle_hint_command(
 
         logger.info(f"用戶 {interaction.user} 請求 {target_date} 的 Wordle 提示")
 
-        # 2. 獲取 Wordle 答案
+        # 2. 初始化 Emoji 支援
+        emoji_context = ""
+        if bot.config.discord.input_media.enable_emoji_processing:  # 配置控制
+            try:
+                emoji_registry = EmojiRegistry()
+                await emoji_registry.load_emojis(bot)
+                guild_id = interaction.guild.id if interaction.guild else None
+                emoji_context = emoji_registry.build_prompt_context(guild_id)
+                logger.debug(f"已載入 Emoji 上下文，長度: {len(emoji_context)}")
+            except Exception as e:
+                logger.warning(f"載入 Emoji 上下文失敗: {e}")
+
+        # 3. 獲取 Wordle 答案
         try:
             wordle_result = await bot.wordle_service.fetch_solution(target_date)
             solution = wordle_result.solution
@@ -144,6 +159,7 @@ async def wordle_hint_command(
                 solution=solution,
                 persona_style=persona_style,
                 hint_style_description=hint_style_description,
+                emoji_context=emoji_context,  # 新增 emoji 上下文參數
             )
 
             logger.debug(f"Wordle 提示生成提示詞: {prompt_template}")

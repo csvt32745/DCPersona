@@ -36,8 +36,6 @@
     - [📺 YouTube 摘要 (`youtube_summary`)](#-youtube-摘要-youtube_summary)
 - [Slash Commands](#slash-commands)
   - [🧩 Wordle 每日提示 (`/wordle_hint`)](#-wordle-每日提示-wordle_hint)
-- [工作流程](#工作流程)
-  - [Wordle Hint Slash Command](#wordle-hint-slash-command)
 - [配置系統](#配置系統)
   - [配置特色](#配置特色)
 - [測試](#測試)
@@ -73,7 +71,7 @@
 - **輸入/輸出媒體管線**:
   - **Input**: `message_collector` 結合 `InputMediaConfig` 和 `input_emoji_cache` 解析用戶訊息中的媒體。
   - **Output**: `output_media` 模組（`EmojiRegistry`, `OutputStickerRegistry`, `OutputMediaContextBuilder`）負責生成 Bot 回覆的媒體內容和提示上下文。
-- **智能 Emoji 輔助**: 配置驅動的 emoji 系統，根據伺服器上下文智能建議 emoji，LLM 直接生成正確的 Discord 格式
+- **智能 Emoji 輔助**: 配置驅動的 emoji 系統，根據伺服器上下文智能建議 emoji，LLM 直接生成正確的 Discord 格式，Wordle 提示功能也支援此功能，使提示更生動有趣。
 - **Embed Media 支援**: 自動偵測 `embed._thumbnail` / `embed.image` 的外部圖片 URL，封裝為 VirtualAttachment 與附件流程統一。
 - **媒體統計與摘要**: `message_collector` 會統計 emoji/sticker/靜態/動畫圖片數量並於訊息末尾附加 `[包含: ...]` 標記，`MULTIMODAL_GUIDANCE` 提示詞協助 LLM 解讀。
 - **文件處理**: 自動處理文字附件
@@ -272,7 +270,7 @@ DCPersona 透過 LangChain 的工具系統，賦予 Agent 與外部世界互動�
 除了透過對話與 Agent 互動，DCPersona 也提供方便的 Slash Commands 來執行特定功能。
 
 ### 🧩 Wordle 每日提示 (`/wordle_hint`)
-- **功能**: 獲取當日或指定日期的 Wordle 遊戲提示，並由 LLM 生成富有趣味的創意線索。
+- **功能**: 獲取當日或指定日期的 Wordle 遊戲提示，並由 LLM 生成富有趣味的創意線索。此功能支援智能 Emoji 輸出，LLM 會根據當前伺服器的可用 emoji 上下文，在提示中適當使用 emoji，使提示更生動有趣。
 - **特色**:
   - **即時互動**: 無需等待 Agent 回應，指令立即觸發。
   - **多樣化風格**: 提示風格已模組化，所有風格模板位於 `prompt_system/tool_prompts/wordle_hint_types/`，Bot 會隨機選擇一種風格並注入至主提示詞。
@@ -282,22 +280,6 @@ DCPersona 透過 LangChain 的工具系統，賦予 Agent 與外部世界互動�
   - `/wordle_hint`：獲取今天的 Wordle 提示。
   - `/wordle_hint date:2024-05-20`：獲取特定日期的提示。
 
-## 工作流程
-
-### Wordle Hint Slash Command
-
-```mermaid
-flowchart TD
-    A["/wordle_hint 指令觸發"] --> B["wordle_hint_command\n(discord_bot/commands/wordle_hint.py)"]
-    B --> C{日期參數?}
-    C -- 無效格式 --> X["回覆日期格式錯誤"]
-    C -- 有效或預設 --> D["WordleService.fetch_solution"]
-    D -- 404 / Timeout --> Y["回覆 API 失敗/超時"]
-    D -- 取得答案 --> E["PromptSystem.get_tool_prompt"]
-    E --> F["LLM 產生提示"]
-    F --> G["safe_wordle_output 處理 spoiler"]
-    G --> H["interaction.followup.send"]
-```
 
 > 註：所有 Slash Command 由 `register_commands(bot)` 於啟動階段自動註冊，無需手動新增。
 

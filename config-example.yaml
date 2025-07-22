@@ -49,7 +49,7 @@ discord:
     max_sticker_per_message: 2     # 每條訊息最大 sticker 處理數量
     max_animated_frames: 4         # 動畫最大幀數
     emoji_sticker_max_size: 256    # emoji/sticker 最大尺寸 (像素)
-    enable_emoji_processing: true  # 是否啟用 emoji 處理
+    enable_emoji_processing: true  # 是否啟用 emoji 處理（影響 Wordle 等功能的 emoji 輸出）
     enable_sticker_processing: true # 是否啟用 sticker 處理
     enable_animated_processing: true # 是否啟用動畫處理
 
