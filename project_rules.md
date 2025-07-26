@@ -27,7 +27,8 @@ DCPersona/
 │   ├── message_collector.py # 訊息收集、歷史處理與多模態支援 (Input)
 │   ├── progress_manager.py  # Discord 進度消息管理系統
 │   ├── progress_adapter.py  # Discord 進度適配器（支援串流回應）
-│   └── message_manager.py   # Discord 訊息快取管理
+│   ├── message_manager.py   # Discord 訊息快取管理
+│   └── trend_following.py   # 跟風功能處理器
 │
 ├── output_media/            # ✨ 輸出媒體管線 (Output)
 │   ├── emoji_registry.py    # Emoji 註冊與格式化
@@ -89,6 +90,7 @@ DCPersona/
     *   `message_collector.py`: 處理複雜的訊息收集邏輯，支援對話歷史、多模態內容（圖片轉 Base64）、訊息去重複與排序。
     *   `progress_adapter.py`: Discord 進度整合，實現統一訊息管理、智能串流支援、即時進度更新和多階段狀態指示。
     *   `message_manager.py`: 管理 Discord 訊息的快取和緩存，用於性能優化。
+    *   `trend_following.py`: 跟風功能處理器，實現 reaction、內容和 emoji 三種跟風模式，包含頻道鎖機制、Bot 循環防護和智能 LLM 回應生成。
 
 5.  **`output_media/` - 輸出媒體管線**:
     *   `emoji_registry.py`: 負責載入、驗證和格式化 Bot 回應中可用的 Emoji。
@@ -117,17 +119,32 @@ DCPersona/
 ### Discord Bot 工作流程
 
 1.  **訊息接收**: `message_handler.py` 接收 Discord 事件。
-2.  **權限檢查**: 驗證使用者權限和頻道設定。
-3.  **訊息收集**: `message_collector.py` 使用 `InputMediaConfig` 和 `input_emoji_cache` 收集對話歷史和圖片等多模態內容。
-4.  **Agent 初始化**: 創建 `UnifiedAgent` 實例並配置進度觀察者。
-5.  **提示上下文建構**: 使用 `OutputMediaContextBuilder` 建構 emoji 和 sticker 的提示上下文，提供給 LLM。
-6.  **LangGraph 執行**: 執行 `generate_query_or_plan` → `execute_tools` → `reflection` → `finalize_answer` 流程。
-7.  **智能串流處理**: 在 `finalize_answer` 階段根據配置啟用串流回應。
-8.  **統一進度管理**: 透過 `DiscordProgressAdapter` 和 `ProgressManager` 統一處理所有 Discord 訊息操作。
-9.  **Emoji 格式防呆補償**: `DiscordProgressAdapter` 在所有 final_answer 輸出階段，透過 `OutputMediaContextBuilder.parse_emoji_output()` 自動修復 LLM 輸出的常見 emoji 格式錯誤。
-10. **結果回覆**: 將最終答案格式化後回覆到 Discord。
-11. **提醒排程**: 若 Agent 執行 `set_reminder` 工具成功，`message_handler.py` 會從 Agent 狀態中提取 `ReminderDetails`，並將其傳遞給 `event_scheduler/scheduler.py` 進行排程。
-12. **提醒觸發**: 當 `event_scheduler/scheduler.py` 觸發提醒事件時，會呼叫 `message_handler.py` 中註冊的回調函數，該函數會建構一個模擬訊息，重新送回 Agent 處理以生成提醒內容，並最終發送至 Discord。
+2.  **跟風處理**: 優先處理跟風功能（如果啟用），檢測 reaction、內容或 emoji 跟風模式。
+3.  **權限檢查**: 驗證使用者權限和頻道設定。
+4.  **訊息收集**: `message_collector.py` 使用 `InputMediaConfig` 和 `input_emoji_cache` 收集對話歷史和圖片等多模態內容。
+5.  **Agent 初始化**: 創建 `UnifiedAgent` 實例並配置進度觀察者。
+6.  **提示上下文建構**: 使用 `OutputMediaContextBuilder` 建構 emoji 和 sticker 的提示上下文，提供給 LLM。
+7.  **LangGraph 執行**: 執行 `generate_query_or_plan` → `execute_tools` → `reflection` → `finalize_answer` 流程。
+8.  **智能串流處理**: 在 `finalize_answer` 階段根據配置啟用串流回應。
+9.  **統一進度管理**: 透過 `DiscordProgressAdapter` 和 `ProgressManager` 統一處理所有 Discord 訊息操作。
+10. **Emoji 格式防呆補償**: `DiscordProgressAdapter` 在所有 final_answer 輸出階段，透過 `OutputMediaContextBuilder.parse_emoji_output()` 自動修復 LLM 輸出的常見 emoji 格式錯誤。
+11. **結果回覆**: 將最終答案格式化後回覆到 Discord。
+12. **提醒排程**: 若 Agent 執行 `set_reminder` 工具成功，`message_handler.py` 會從 Agent 狀態中提取 `ReminderDetails`，並將其傳遞給 `event_scheduler/scheduler.py` 進行排程。
+13. **提醒觸發**: 當 `event_scheduler/scheduler.py` 觸發提醒事件時，會呼叫 `message_handler.py` 中註冊的回調函數，該函數會建構一個模擬訊息，重新送回 Agent 處理以生成提醒內容，並最終發送至 Discord。
+
+### 跟風功能工作流程
+
+1.  **事件觸發**: `client.py` 接收 `on_message` 或 `on_raw_reaction_add` 事件。
+2.  **基本檢查**: 檢查跟風功能是否啟用、頻道權限和冷卻狀態。
+3.  **頻道鎖獲取**: 使用 asyncio 鎖防止同一頻道的併發處理。
+4.  **歷史訊息分析**: 獲取最近訊息歷史，分析跟風模式。
+5.  **模式檢測**: 
+    - **Reaction 跟風**: 檢查 reaction 數量是否達到閾值
+    - **內容跟風**: 檢測連續相同內容（文字或 sticker）
+    - **Emoji 跟風**: 檢測連續純 emoji 訊息
+6.  **Bot 循環防護**: 檢查 Bot 是否已參與相同模式的跟風。
+7.  **執行跟風**: 根據檢測到的模式執行相應操作。
+8.  **冷卻更新**: 更新頻道冷卻時間，防止過度回應。
 
 ### Slash Command 工作流程 (`/wordle_hint`)
 1.  **指令觸發**: 使用者在 Discord 中執行 `/wordle_hint` 命令，可選擇性提供 `date` 參數。

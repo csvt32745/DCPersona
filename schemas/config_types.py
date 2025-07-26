@@ -253,6 +253,18 @@ class ConfigurationError(Exception):
 
 
 @dataclass
+class TrendFollowingConfig:
+    """跟風功能配置"""
+    enabled: bool = False
+    allowed_channels: List[int] = field(default_factory=list)
+    cooldown_seconds: int = 60
+    message_history_limit: int = 10
+    reaction_threshold: int = 3
+    content_threshold: int = 2
+    emoji_threshold: int = 3
+
+
+@dataclass
 class AppConfig:
     """應用程式總配置"""
     system: SystemConfig = field(default_factory=SystemConfig)
@@ -264,6 +276,7 @@ class AppConfig:
     development: DevelopmentConfig = field(default_factory=DevelopmentConfig)
     streaming: StreamingConfig = field(default_factory=StreamingConfig)
     reminder: ReminderConfig = field(default_factory=ReminderConfig)
+    trend_following: TrendFollowingConfig = field(default_factory=TrendFollowingConfig)
     
     def __post_init__(self):
         """初始化後處理，載入環境變數"""

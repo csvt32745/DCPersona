@@ -28,7 +28,8 @@ DCPersona/
 │   ├── message_collector.py # 訊息收集、歷史處理與多模態支援 (Input)
 │   ├── progress_manager.py  # Discord 進度消息管理系統
 │   ├── progress_adapter.py  # Discord 進度適配器（支援串流回應）
-│   └── message_manager.py   # Discord 訊息快取管理
+│   ├── message_manager.py   # Discord 訊息快取管理
+│   └── trend_following.py   # **[新增]** 跟風功能處理器
 │
 ├── output_media/            # ✨ 輸出媒體管線 (Output)
 │   ├── emoji_registry.py    # Emoji 註冊與格式化
@@ -110,7 +111,14 @@ DCPersona/
 ```mermaid
 flowchart TD
     A[Discord 訊息] --> B[message_handler.py]
-    B --> C[message_collector.py]
+    B --> B1{跟風功能?}
+    B1 -->|啟用| TF[trend_following.py]
+    TF --> TF1[檢查跟風模式]
+    TF1 --> TF2{需要跟風?}
+    TF2 -->|是| TF3[執行跟風回應]
+    TF2 -->|否| C[message_collector.py]
+    B1 -->|未啟用| C
+    TF3 --> END1[結束處理]
     C --> D[收集訊息歷史與多模態內容]
     D --> E[創建 UnifiedAgent]
     E --> F[註冊 DiscordProgressAdapter]
@@ -124,18 +132,19 @@ flowchart TD
 
 **詳細步驟說明**:
 1. **訊息接收**: `message_handler.py` 接收 Discord 事件
-2. **權限檢查**: 驗證使用者權限和頻道設定
-3. **訊息收集**: `message_collector.py` 收集對話歷史和圖片等多模態內容
-4. **Agent 初始化**: 創建 `UnifiedAgent` 實例並配置進度觀察者
-5. **LangGraph 執行**: 執行 `generate_query_or_plan` → `execute_tools` → `reflection` → `finalize_answer` 流程
-6. **智能串流處理**: 在 `finalize_answer` 階段根據配置啟用串流回應，基於時間和內容長度智能更新
-7. **統一進度管理**: 透過 `DiscordProgressAdapter` 和 `ProgressManager` 統一處理所有 Discord 訊息操作
-8. **Emoji 格式防呆補償**: `DiscordProgressAdapter` 在所有 final_answer 輸出階段，透過 `OutputMediaContextBuilder.parse_emoji_output()` 自動修復 LLM 輸出的常見 emoji 格式錯誤
-9. **結果回覆**: 將最終答案格式化後回覆到 Discord，支援串流和非串流兩種模式
-10. **提醒排程**:
+2. **跟風處理**: 優先檢查並處理跟風功能（如果啟用）
+3. **權限檢查**: 驗證使用者權限和頻道設定
+4. **訊息收集**: `message_collector.py` 收集對話歷史和圖片等多模態內容
+5. **Agent 初始化**: 創建 `UnifiedAgent` 實例並配置進度觀察者
+6. **LangGraph 執行**: 執行 `generate_query_or_plan` → `execute_tools` → `reflection` → `finalize_answer` 流程
+7. **智能串流處理**: 在 `finalize_answer` 階段根據配置啟用串流回應，基於時間和內容長度智能更新
+8. **統一進度管理**: 透過 `DiscordProgressAdapter` 和 `ProgressManager` 統一處理所有 Discord 訊息操作
+9. **Emoji 格式防呆補償**: `DiscordProgressAdapter` 在所有 final_answer 輸出階段，透過 `OutputMediaContextBuilder.parse_emoji_output()` 自動修復 LLM 輸出的常見 emoji 格式錯誤
+10. **結果回覆**: 將最終答案格式化後回覆到 Discord，支援串流和非串流兩種模式
+11. **提醒排程**:
     - 若 Agent 執行 `set_reminder` 工具成功，`message_handler.py` 會從 Agent 狀態中提取 `ReminderDetails`。
     - 將 `ReminderDetails` 傳遞給 `EventScheduler` 進行排程。
-11. **提醒觸發**:
+12. **提醒觸發**:
     - `EventScheduler` 觸發事件時，會呼叫 `message_handler.py` 中註冊的回調。
     - 回調函數會建構一個模擬的 `MsgNode`，並重新送回 Agent 處理，以生成提醒訊息。
 
@@ -273,6 +282,30 @@ flowchart TD
 - **緩存管理**: 管理訊息的過期和清理
 - **性能優化**: 減少重複訊息處理
 
+#### `trend_following.py` - 跟風功能處理器
+實現 Discord 頻道中的智能跟風功能：
+
+**核心功能**:
+- **Reaction 跟風**: 當訊息 reaction 達到設定閾值時，Bot 自動添加相同 reaction
+- **內容跟風**: 檢測連續相同訊息內容（文字或 sticker）並自動複製發送
+- **Emoji 跟風**: 識別連續純 emoji 訊息，使用 LLM 生成適合的 emoji 回應
+
+**關鍵特性**:
+- **頻道鎖機制**: 使用 asyncio.Lock 防止同一頻道的併發處理導致重複回應
+- **Bot 循環防護**: 智能檢測 Bot 是否已參與相同模式的跟風，避免無限循環
+- **配置驅動**: 支援頻道級啟用控制、可調整的閾值和冷卻時間
+- **訊息歷史分析**: 輕量級的歷史訊息讀取，分析跟風模式
+- **智能 LLM 整合**: Emoji 跟風模式整合 LLM 和 EmojiRegistry，生成上下文相關的回應
+
+**工作流程**:
+1. 事件觸發（on_message 或 on_raw_reaction_add）
+2. 基本檢查（功能啟用、頻道權限、冷卻狀態）
+3. 獲取頻道鎖（避免併發處理）
+4. 分析訊息歷史
+5. 檢測跟風模式並驗證 Bot 參與狀態
+6. 執行相應的跟風操作
+7. 更新冷卻時間
+
 #### commands/ - Slash Command 模組
 負責所有 Discord Slash Commands 的定義與集中註冊。
 
@@ -362,6 +395,15 @@ llm:
       model: "gemini-2.0-flash-lite"
       temperature: 0.4      # 進度訊息用中等溫度
       max_output_tokens: 20 # 嚴格限制進度訊息長度
+
+trend_following:
+  enabled: true           # 啟用跟風功能
+  allowed_channels: []    # 允許的頻道 ID 列表（空表示所有頻道）
+  cooldown_seconds: 60    # 冷卻時間（秒）
+  message_history_limit: 10 # 訊息歷史讀取限制
+  reaction_threshold: 3   # Reaction 跟風觸發閾值
+  content_threshold: 2    # 內容跟風觸發閾值  
+  emoji_threshold: 3      # Emoji 跟風觸發閾值
 ```
 
 ---
@@ -598,6 +640,7 @@ max_rounds = config.agent.behavior.max_tool_rounds
 - **配置測試**: 型別安全配置載入測試
 - **串流測試**: 串流系統和智能更新策略測試
 - **進度系統測試**: 進度觀察者和適配器功能測試
+- **跟風功能測試**: 包含 reaction、內容和 emoji 跟風的完整測試
 
 ### 執行測試
 ```bash

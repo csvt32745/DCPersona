@@ -25,6 +25,7 @@ from prompt_system.prompts import PromptSystem
 from output_media.emoji_registry import EmojiRegistry
 from langchain_google_genai import ChatGoogleGenerativeAI
 from discord_bot.commands import register_commands
+from discord_bot.trend_following import TrendFollowingHandler
 
 class DCPersonaBot(commands.Bot):
     """自定義 Bot 類，支援 Slash Commands"""
@@ -35,6 +36,8 @@ class DCPersonaBot(commands.Bot):
         intents.message_content = True
         intents.guilds = True
         intents.guild_messages = True
+        intents.reactions = True  # 啟用 reaction 相關事件
+        
         # 檢查是否支援 direct_messages 屬性
         if hasattr(intents, 'direct_messages'):
             intents.direct_messages = True
@@ -54,6 +57,9 @@ class DCPersonaBot(commands.Bot):
         
         # 初始化 LLM（用於生成 Wordle 提示）
         self._init_wordle_llm()
+        
+        # 初始化跟風功能處理器
+        self.trend_following_handler = None  # 將在 on_ready 中初始化
         
         # 創建訊息處理器
         self.message_handler = get_message_handler(config, event_scheduler)
@@ -123,6 +129,21 @@ class DCPersonaBot(commands.Bot):
         except Exception as e:
             self.logger.error(f"❌ 載入 emoji 配置失敗: {e}")
         
+        # 初始化跟風功能處理器
+        try:
+            self.trend_following_handler = TrendFollowingHandler(
+                config=self.config.trend_following,
+                llm=self.wordle_llm,
+                emoji_registry=self.emoji_handler
+            )
+            if self.config.trend_following.enabled:
+                self.logger.info("✅ 跟風功能已啟用")
+            else:
+                self.logger.info("ℹ️ 跟風功能已停用")
+        except Exception as e:
+            self.logger.error(f"❌ 初始化跟風功能失敗: {e}")
+            self.trend_following_handler = None
+        
         # 記錄配置資訊
         if self.config and self.config.agent:
             enabled_tools = self.config.get_enabled_tools()
@@ -142,6 +163,14 @@ class DCPersonaBot(commands.Bot):
         try:
             self._handler_stats["messages_processed"] += 1
             
+            # 處理跟風功能（在主要訊息處理前）
+            if self.trend_following_handler:
+                try:
+                    await self.trend_following_handler.handle_message_following(message, self)
+                    return
+                except Exception as e:
+                    self.logger.error(f"跟風功能處理失敗: {e}")
+            
             # 使用新的統一訊息處理器
             success = await self.message_handler.handle_message(message)
             
@@ -158,6 +187,41 @@ class DCPersonaBot(commands.Bot):
                     await message.reply("抱歉，處理您的訊息時發生了內部錯誤。請稍後再試。")
             except Exception as reply_error:
                 self.logger.error(f"發送錯誤回覆失敗: {reply_error}")
+
+    async def on_reaction_add(self, reaction: discord.Reaction, user):
+        """當使用者在訊息上新增 Reaction 時觸發 (受訊息快取限制)"""
+        try:
+            if user.bot:
+                return  # 避免機器人循環觸發
+            
+            # self.logger.info(
+            #     f"🆕 Reaction Add | guild={getattr(reaction.message.guild, 'name', 'DM')} "
+            #     f"channel={reaction.message.channel} user={user} emoji={reaction.emoji} "
+            #     f"message_id={reaction.message.id}"
+            # )
+        except Exception as e:
+            self.logger.error(f"記錄 on_reaction_add 時發生錯誤: {e}", exc_info=True)
+
+    async def on_raw_reaction_add(self, payload: discord.RawReactionActionEvent):
+        """當有 Reaction 新增（不受訊息快取限制）"""
+        try:
+            # 避免機器人自己觸發
+            if payload.user_id == self.user.id:
+                return
+            
+            # 處理 reaction 跟風功能
+            if self.trend_following_handler:
+                try:
+                    await self.trend_following_handler.handle_raw_reaction_following(payload, self)
+                except Exception as e:
+                    self.logger.error(f"Raw Reaction 跟風功能處理失敗: {e}")
+            
+            # self.logger.info(
+            #     f"🆕 RAW Reaction Add | guild_id={payload.guild_id} channel_id={payload.channel_id} "
+            #     f"message_id={payload.message_id} user_id={payload.user_id} emoji={payload.emoji}"
+            # )
+        except Exception as e:
+            self.logger.error(f"記錄 on_raw_reaction_add 時發生錯誤: {e}", exc_info=True)
     
     async def on_error(self, event: str, *args, **kwargs):
         """Discord 客戶端錯誤事件處理器"""

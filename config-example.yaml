@@ -159,6 +159,16 @@ reminder:
   max_reminders_per_user: 10       # 每個用戶最大提醒數量
   cleanup_expired_events: true     # 是否清理過期事件
 
+# 跟風功能配置
+trend_following:
+  enabled: false                 # 是否啟用跟風功能
+  allowed_channels: []           # 允許的頻道 ID 列表（空表示所有頻道）
+  cooldown_seconds: 60           # 冷卻時間（秒）
+  message_history_limit: 10      # 讀取歷史訊息數量
+  reaction_threshold: 3          # reaction 觸發閾值
+  content_threshold: 2           # 相同內容觸發閾值
+  emoji_threshold: 3             # emoji 訊息觸發閾值
+
 # 開發與測試配置
 development:
   debug_mode: false      # 除錯模式

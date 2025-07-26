@@ -91,6 +91,13 @@
 - **易於擴展**: 標準化的工具和模組介面，支援自定義進度觀察者
 - **統一管理**: 所有 Discord 訊息操作統一通過 ProgressManager 處理
 
+### 🎭 智能跟風系統
+- **Reaction 跟風**: 當訊息 reaction 達到閾值時，Bot 自動添加相同 reaction
+- **內容跟風**: 檢測連續相同訊息（文字或 sticker）並自動複製
+- **Emoji 跟風**: 識別連續 emoji 訊息並使用 LLM 生成適合的 emoji 回應
+- **防循環機制**: 內建 Bot 參與檢測，避免無限循環跟風
+- **頻道級控制**: 支援特定頻道啟用，配置冷卻時間防止過度回應
+
 ---
 
 ## 安裝與設定
@@ -166,7 +173,8 @@ CLI 模式提供：
 - **自然對話**: 直接與 Bot 對話，支援文字和圖片
 - **多輪對話**: 保持對話上下文，支援連續提問
 - **智能研究**: 複雜問題自動啟動多步驟搜尋和分析
-- **設定提醒**: 透過 "提醒我..."、"設定提醒..." 等自然語言來設定排程。
+- **設定提醒**: 透過 "提醒我..."、"設定提醒..." 等自然語言來設定排程
+- **智能跟風**: Bot 會自動偵測頻道中的跟風模式並參與其中
 
 ---
 
@@ -195,7 +203,8 @@ DCPersona/
 │   ├── message_handler.py   # 訊息事件處理
 │   ├── message_collector.py # 多模態訊息收集 (Input)
 │   ├── progress_manager.py  # 進度消息管理
-│   └── progress_adapter.py  # 進度適配器（串流支援）
+│   ├── progress_adapter.py  # 進度適配器（串流支援）
+│   └── trend_following.py   # 跟風功能處理器
 │
 ├── output_media/            # ✨ 輸出媒體管線 (Output)
 │   ├── emoji_registry.py    # Emoji 註冊與格式化
@@ -320,6 +329,13 @@ llm:
       temperature: 0.4
       max_output_tokens: 20  # 嚴格限制進度訊息長度
 
+trend_following:
+  enabled: true
+  allowed_channels: []  # 空表示所有頻道
+  cooldown_seconds: 60
+  reaction_threshold: 3
+  content_threshold: 2
+  emoji_threshold: 3
 
 discord:
   limits:
@@ -333,7 +349,8 @@ discord:
 - **型別安全**: 使用 dataclass 而非字典存取
 - **自動驗證**: 啟動時檢查配置完整性
 - **智能進度訊息**: 支援 LLM 自動生成進度訊息，可透過 `auto_generate_messages` 啟用/關閉
-- **控制**: 可配置的串流啟用和內容長度閾值
+- **串流控制**: 可配置的串流啟用和內容長度閾值
+- **跟風系統**: 靈活的跟風閾值和冷卻設定，支援頻道級控制
 - **進度管理**: 靈活的進度更新間隔和顯示模式，並可在 `progress.discord.messages` 透過對應 `ProgressStage` key 來自訂文字/emoji（含新加入的 `tool_status` 階段）
 
    **範例**：
