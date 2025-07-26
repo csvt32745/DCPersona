@@ -166,8 +166,8 @@ class DCPersonaBot(commands.Bot):
             # 處理跟風功能（在主要訊息處理前）
             if self.trend_following_handler:
                 try:
-                    await self.trend_following_handler.handle_message_following(message, self)
-                    return
+                    if await self.trend_following_handler.handle_message_following(message, self)
+                        return
                 except Exception as e:
                     self.logger.error(f"跟風功能處理失敗: {e}")
             

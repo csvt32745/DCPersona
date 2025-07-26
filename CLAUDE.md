@@ -45,6 +45,7 @@ python -m pytest tests/test_streaming.py -v
 python -m pytest tests/test_progress_manager_concurrency.py -v
 python -m pytest tests/test_wordle_integration.py -v
 python -m pytest tests/test_emoji_system.py -v
+python -m pytest tests/test_trend_following.py -v
 
 # Run single test
 python -m pytest tests/test_basic_structure.py::test_config_loading -v
@@ -79,6 +80,14 @@ Tools in `tools/` directory use LangChain's `@tool` decorator:
 - `set_reminder.py`: Natural language time parsing and scheduling
 - Tools are dynamically bound to LLM via `llm.bind_tools()`
 
+### Trend Following System Architecture
+DCPersona includes an intelligent trend following system that operates independently of the main agent:
+- `discord_bot/trend_following.py`: Comprehensive trend following handler with three modes
+- `schemas/config_types.py`: Type-safe configuration with `TrendFollowingConfig` dataclass
+- Channel-level controls with asyncio locks for concurrency safety
+- Bot loop prevention mechanisms to avoid infinite trend cycles
+- Integration with existing emoji registry for intelligent emoji responses
+
 ## Key Implementation Patterns
 
 ### Unified Agent Design
@@ -98,11 +107,12 @@ DCPersona includes an intelligent emoji assistance system that enhances message 
 
 ### Discord Integration Flow
 1. `discord_bot/message_handler.py` processes Discord events
-2. `discord_bot/message_collector.py` gathers conversation history and multimodal content
-3. Creates `UnifiedAgent` with `DiscordProgressAdapter` and `EmojiHandler`
-4. Executes LangGraph with real-time progress updates and emoji context injection
-5. `discord_bot/progress_manager.py` handles all Discord message operations
-6. `output_media/emoji_registry.py` provides intelligent emoji suggestions and formatting
+2. **Trend Following Processing**: Priority handling of trend following features (if enabled)
+3. `discord_bot/message_collector.py` gathers conversation history and multimodal content
+4. Creates `UnifiedAgent` with `DiscordProgressAdapter` and `EmojiHandler`
+5. Executes LangGraph with real-time progress updates and emoji context injection
+6. `discord_bot/progress_manager.py` handles all Discord message operations
+7. `output_media/emoji_registry.py` provides intelligent emoji suggestions and formatting
 
 ### Multimodal Content Processing
 - `utils/image_processor.py` handles emoji, stickers, and animations
@@ -150,6 +160,26 @@ async for chunk in llm.astream(messages):
     await self._notify_streaming_chunk(chunk.content)
 ```
 
+### Trend Following Usage Pattern
+```python
+# Trend following handler initialization (in bot startup)
+trend_following_handler = TrendFollowingHandler(
+    config=config.trend_following,
+    llm=wordle_llm,
+    emoji_registry=emoji_handler
+)
+
+# Event handling in Discord client
+async def on_message(message):
+    # Priority: Handle trend following first
+    await trend_following_handler.handle_message_following(message, bot)
+    # Then proceed with normal message processing...
+
+async def on_raw_reaction_add(payload):
+    # Handle reaction following
+    await trend_following_handler.handle_raw_reaction_following(payload, bot)
+```
+
 ## Important Implementation Details
 
 ### Tool Execution Strategy
@@ -160,11 +190,20 @@ async for chunk in llm.astream(messages):
 
 ### Message Processing Pipeline
 1. Permission and channel validation
-2. Multimodal content collection with deduplication
-3. Agent state initialization
-4. LangGraph execution with progress observers
-5. Response formatting and delivery
-6. Reminder scheduling integration
+2. **Trend Following Processing**: Priority handling of reaction/content/emoji following
+3. Multimodal content collection with deduplication
+4. Agent state initialization
+5. LangGraph execution with progress observers
+6. Response formatting and delivery
+7. Reminder scheduling integration
+
+### Trend Following Implementation Details
+- **Three Following Modes**: Reaction, content (text/sticker), and emoji following
+- **Concurrency Control**: Channel-specific asyncio locks prevent duplicate responses
+- **Bot Loop Prevention**: Automatic detection of bot participation in trend segments
+- **Priority System**: Content following has higher priority than emoji following
+- **Intelligent Responses**: LLM-powered emoji responses using existing emoji registry
+- **Configuration-Driven**: Flexible thresholds, cooldowns, and channel restrictions
 
 ### Streaming Implementation
 - Configurable via `config.streaming.enabled` and `min_content_length`
@@ -187,6 +226,7 @@ The test suite covers:
 - Streaming and progress system tests
 - Discord bot functionality tests
 - Tool integration tests including YouTube and Wordle
+- **Trend following system comprehensive testing**
 
 Key test files:
 - `test_agent_core_langchain_integration.py`: Core agent functionality
@@ -194,6 +234,7 @@ Key test files:
 - `test_progress_manager_concurrency.py`: Progress management
 - `test_actual_discord_usage.py`: Discord integration
 - `test_emoji_system.py`: Emoji system functionality with 21 comprehensive tests
+- `test_trend_following.py`: **Comprehensive trend following tests with 37 test cases covering all functionality**
 
 ## Configuration Management
 
@@ -208,6 +249,7 @@ Key test files:
 - `agent`: Tool enablement, behavior, thresholds
 - `progress`: Platform-specific progress update settings
 - `streaming`: Streaming response configuration
+- `trend_following`: **Comprehensive trend following configuration with channel controls, thresholds, and cooldowns**
 
 ### Tool Configuration
 Tools can be enabled/disabled and prioritized:
@@ -223,6 +265,18 @@ Special cases:
 - `reminder` tool controlled by `reminder.enabled`
 - `youtube_summary` enabled by default if not explicitly configured
 
+### Trend Following Configuration
+```yaml
+trend_following:
+  enabled: true
+  allowed_channels: []  # Empty = all channels allowed
+  cooldown_seconds: 60
+  message_history_limit: 10
+  reaction_threshold: 3
+  content_threshold: 2
+  emoji_threshold: 3
+```
+
 ## Discord Bot Features
 
 ### Slash Commands
@@ -235,6 +289,7 @@ Special cases:
 - Multimodal support (text, images, emoji, stickers)
 - Permission system with user/role/channel filtering
 - Maintenance mode support
+- **Intelligent Trend Following**: Automatic detection and participation in reaction, content, and emoji trends
 
 ### Progress Updates
 - Real-time embed-based progress indicators
@@ -279,6 +334,7 @@ This architecture enables a highly modular, type-safe, and extensible Discord AI
 - `tests/test_streaming.py`: 串流回應系統測試
 - `tests/test_progress_manager_concurrency.py`: 進度管理測試
 - `tests/test_wordle_integration.py`: Wordle 整合測試
+- `tests/test_trend_following.py`: **跟風功能完整測試（37 項測試，涵蓋所有核心功能和邊界情況）**
 
 ### Configuration Files
 - `config-example.yaml`: 主配置範例檔
@@ -309,3 +365,26 @@ This architecture enables a highly modular, type-safe, and extensible Discord AI
 
 ### 工具查詢
 - 若需要查詢不熟悉的 library 使用方式，使用 `context7` tool 查詢最新文檔
+
+## Recent Major Updates
+
+### 跟風功能系統 (Trend Following System)
+**實施日期**: 最近完成
+
+**核心功能**:
+- **Reaction 跟風**: 當 reaction 達到設定閾值時自動添加相同 reaction
+- **內容跟風**: 檢測連續相同內容（文字或 sticker）並自動複製
+- **Emoji 跟風**: 識別連續 emoji 訊息並使用 LLM 生成適合的 emoji 回應
+
+**技術特色**:
+- 頻道級別的併發控制使用 asyncio.Lock 防止重複回應
+- Bot 循環防護機制避免無限跟風
+- 配置驅動的行為控制，支援頻道白名單和冷卻時間
+- 與現有 emoji 註冊系統整合，提供智能 emoji 回應
+- 完整的單元測試覆蓋，包含 37 項測試案例
+
+**檔案位置**:
+- `discord_bot/trend_following.py`: 核心處理器實現
+- `schemas/config_types.py`: 新增 `TrendFollowingConfig` 配置類型
+- `tests/test_trend_following.py`: 完整測試套件
+- `config-example.yaml`: 配置範例更新
