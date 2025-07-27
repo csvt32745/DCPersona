@@ -262,6 +262,12 @@ class TrendFollowingConfig:
     reaction_threshold: int = 3
     content_threshold: int = 2
     emoji_threshold: int = 3
+    
+    # 機率性跟風配置
+    enable_probabilistic: bool = True
+    base_probability: float = 0.5
+    probability_boost_factor: float = 0.15
+    max_probability: float = 0.95
 
 
 @dataclass

@@ -166,9 +166,11 @@ class TestReactionFollowing:
     @pytest.mark.asyncio
     async def test_reaction_following_success(self, handler, mock_payload, mock_bot):
         """測試成功的 reaction 跟風"""
-        result = await handler.handle_raw_reaction_following(mock_payload, mock_bot)
-        
-        assert result is True
+        # 由於機率性跟風，需要確保這次測試會成功
+        with patch.object(handler, 'should_follow_probabilistically', return_value=True):
+            result = await handler.handle_raw_reaction_following(mock_payload, mock_bot)
+            
+            assert result is True
         
         # 驗證訊息獲取
         mock_bot.get_channel.assert_called_once_with(123456789)
@@ -650,11 +652,13 @@ class TestIntegrationScenarios:
         ]
         
         with patch.object(handler, '_get_recent_messages', return_value=history):
-            result = await handler.handle_message_following(message, bot)
-            
-            assert result is True
-            message.channel.send.assert_called_once_with("Hello World")
-            assert handler.is_in_cooldown(123456789) is True
+            # 由於機率性跟風，需要確保這次測試會成功
+            with patch.object(handler, 'should_follow_probabilistically', return_value=True):
+                result = await handler.handle_message_following(message, bot)
+                
+                assert result is True
+                message.channel.send.assert_called_once_with("Hello World")
+                assert handler.is_in_cooldown(123456789) is True
     
     @pytest.mark.asyncio
     async def test_complete_emoji_following_workflow(self, handler):
@@ -680,11 +684,182 @@ class TestIntegrationScenarios:
         ]
         
         with patch.object(handler, '_get_recent_messages', return_value=history):
-            result = await handler.handle_message_following(message, bot)
+            # 由於機率性跟風，需要確保這次測試會成功
+            # 設定隨機種子或直接 patch 機率決策
+            with patch.object(handler, 'should_follow_probabilistically', return_value=True):
+                # Mock emoji 生成回應，因為 emoji 跟風會透過 LLM 生成新的 emoji
+                with patch.object(handler, '_generate_emoji_response', return_value="<:generated_emoji:987654321>"):
+                    # 因為內容跟風優先級更高，需要確保不會觸發內容跟風
+                    # 設置 _try_content_following 返回 False，這樣才會進入 emoji 跟風
+                    with patch.object(handler, '_try_content_following', return_value=False):
+                        result = await handler.handle_message_following(message, bot)
+                        
+                        assert result is True
+                        message.channel.send.assert_called_once_with("<:generated_emoji:987654321>")
+                        assert handler.is_in_cooldown(123456789) is True
+
+
+class TestProbabilisticTrendFollowing:
+    """機率性跟風功能測試"""
+    
+    def test_probabilistic_decision_at_threshold(self):
+        """測試達到閾值時的機率決策"""
+        config = TrendFollowingConfig(
+            enabled=True,
+            enable_probabilistic=True,
+            base_probability=0.5,
+            probability_boost_factor=0.15,
+            max_probability=0.95,
+            reaction_threshold=3
+        )
+        handler = TrendFollowingHandler(config=config)
+        
+        # 設定隨機種子確保可重現的結果
+        import random
+        random.seed(42)
+        
+        # 在閾值處應該有 50% 機率
+        results = []
+        for _ in range(100):
+            results.append(handler.should_follow_probabilistically(3, 3))
+        
+        # 驗證大約 50% 的結果為 True（允許一些誤差）
+        true_count = sum(results)
+        assert 30 <= true_count <= 70, f"Expected ~50 True results, got {true_count}"
+    
+    def test_probabilistic_decision_above_threshold(self):
+        """測試超過閾值時的機率提升"""
+        config = TrendFollowingConfig(
+            enabled=True,
+            enable_probabilistic=True,
+            base_probability=0.5,
+            probability_boost_factor=0.15,
+            max_probability=0.95,
+            reaction_threshold=3
+        )
+        handler = TrendFollowingHandler(config=config)
+        
+        # 設定隨機種子
+        import random
+        random.seed(123)
+        
+        # 超過閾值 1 個應該有 65% 機率 (0.5 + 1*0.15)
+        results = []
+        for _ in range(100):
+            results.append(handler.should_follow_probabilistically(4, 3))
+        
+        true_count = sum(results)
+        assert 45 <= true_count <= 85, f"Expected ~65 True results, got {true_count}"
+    
+    def test_probabilistic_decision_max_probability(self):
+        """測試最大機率上限"""
+        config = TrendFollowingConfig(
+            enabled=True,
+            enable_probabilistic=True,
+            base_probability=0.5,
+            probability_boost_factor=0.15,
+            max_probability=0.95,
+            reaction_threshold=3
+        )
+        handler = TrendFollowingHandler(config=config)
+        
+        # 設定隨機種子
+        import random
+        random.seed(456)
+        
+        # 大幅超過閾值應該被限制在 95%
+        results = []
+        for _ in range(100):
+            results.append(handler.should_follow_probabilistically(20, 3))
+        
+        true_count = sum(results)
+        assert 85 <= true_count <= 100, f"Expected ~95 True results, got {true_count}"
+    
+    def test_probabilistic_decision_below_threshold(self):
+        """測試低於閾值時不跟風"""
+        config = TrendFollowingConfig(
+            enabled=True,
+            enable_probabilistic=True,
+            base_probability=0.5,
+            probability_boost_factor=0.15,
+            max_probability=0.95,
+            reaction_threshold=3
+        )
+        handler = TrendFollowingHandler(config=config)
+        
+        # 低於閾值應該總是返回 False
+        for count in [1, 2]:
+            assert handler.should_follow_probabilistically(count, 3) is False
+    
+    def test_probabilistic_disabled_fallback(self):
+        """測試關閉機率性跟風時回退到硬閾值"""
+        config = TrendFollowingConfig(
+            enabled=True,
+            enable_probabilistic=False,  # 關閉機率性跟風
+            reaction_threshold=3
+        )
+        handler = TrendFollowingHandler(config=config)
+        
+        # 應該使用硬閾值邏輯
+        assert handler.should_follow_probabilistically(2, 3) is False
+        assert handler.should_follow_probabilistically(3, 3) is True
+        assert handler.should_follow_probabilistically(5, 3) is True
+    
+    def test_probabilistic_calculation_accuracy(self):
+        """測試機率計算的準確性"""
+        config = TrendFollowingConfig(
+            enabled=True,
+            enable_probabilistic=True,
+            base_probability=0.3,
+            probability_boost_factor=0.2,
+            max_probability=0.9,
+            reaction_threshold=2
+        )
+        handler = TrendFollowingHandler(config=config)
+        
+        # 手動測試機率計算（不使用隨機）
+        # 模擬一次確定性測試，檢查機率計算邏輯
+        import random
+        original_random = random.random
+        
+        # 模擬 random.random() 返回 0.4
+        random.random = lambda: 0.4
+        try:
+            # count=3, threshold=2, excess=1
+            # probability = 0.3 + 1*0.2 = 0.5
+            # 0.4 < 0.5，應該返回 True
+            assert handler.should_follow_probabilistically(3, 2) is True
             
-            assert result is True
-            message.channel.send.assert_called_once_with("<:test_emoji:123456789>")
-            assert handler.is_in_cooldown(123456789) is True
+            # 模擬 random.random() 返回 0.6  
+            random.random = lambda: 0.6
+            # 0.6 > 0.5，應該返回 False
+            assert handler.should_follow_probabilistically(3, 2) is False
+            
+        finally:
+            random.random = original_random
+    
+    def test_probabilistic_edge_cases(self):
+        """測試機率性跟風的邊界情況"""
+        config = TrendFollowingConfig(
+            enabled=True,
+            enable_probabilistic=True,
+            base_probability=0.0,  # 最低機率
+            probability_boost_factor=1.0,  # 大幅提升
+            max_probability=1.0,  # 允許 100% 機率
+            reaction_threshold=1
+        )
+        handler = TrendFollowingHandler(config=config)
+        
+        import random
+        
+        # 在閾值處機率為 0，應該總是 False
+        random.seed(789)
+        results = [handler.should_follow_probabilistically(1, 1) for _ in range(50)]
+        assert all(result is False for result in results)
+        
+        # 超過閾值 1 個機率為 100%，應該總是 True
+        results = [handler.should_follow_probabilistically(2, 1) for _ in range(50)]
+        assert all(result is True for result in results)
 
 
 if __name__ == "__main__":

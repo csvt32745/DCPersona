@@ -168,6 +168,12 @@ trend_following:
   reaction_threshold: 3          # reaction 觸發閾值
   content_threshold: 2           # 相同內容觸發閾值
   emoji_threshold: 3             # emoji 訊息觸發閾值
+  
+  # 機率性跟風配置
+  enable_probabilistic: true     # 啟用機率性跟風（false = 使用硬閾值）
+  base_probability: 0.5          # 達到閾值時的基礎機率（0.0-1.0）
+  probability_boost_factor: 0.15 # 每超出閾值1個的機率提升量
+  max_probability: 0.95          # 最大機率上限（建議保持<1.0維持隨機性）
 
 # 開發與測試配置
 development:

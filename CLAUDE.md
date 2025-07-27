@@ -87,6 +87,37 @@ DCPersona includes an intelligent trend following system that operates independe
 - Channel-level controls with asyncio locks for concurrency safety
 - Bot loop prevention mechanisms to avoid infinite trend cycles
 - Integration with existing emoji registry for intelligent emoji responses
+- **Probabilistic trend following**: Configurable probability-based decisions for natural interactions
+
+#### Probabilistic Trend Following
+The system supports probabilistic decision-making to create more natural interactions:
+
+**Decision Formula**:
+```
+final_probability = min(max_probability, base_probability + excess_count * boost_factor)
+where excess_count = max(0, current_count - threshold)
+```
+
+**Configuration Parameters**:
+- `enable_probabilistic`: Enable/disable probabilistic mode (default: true)
+- `base_probability`: Base probability when threshold is reached (default: 0.5)
+- `probability_boost_factor`: Probability increase per excess count (default: 0.15)
+- `max_probability`: Maximum probability cap (default: 0.95)
+
+**Example Probability Progression** (with default settings, threshold=3):
+```
+Count | Excess | Probability | Behavior
+  3   |   0    |    50%     | 1 in 2 chance to follow
+  4   |   1    |    65%     | Higher chance as activity increases
+  5   |   2    |    80%     | Very likely in active discussions
+  6+  |   3+   |    95%     | Almost certain but retains randomness
+```
+
+**Benefits**:
+- **Natural Interaction**: Avoids predictable mechanical responses
+- **Activity-Responsive**: Higher probability during active discussions
+- **Configurable**: Adaptable to different server cultures
+- **Backward Compatible**: Can revert to hard thresholds by disabling
 
 ## Key Implementation Patterns
 
@@ -275,6 +306,12 @@ trend_following:
   reaction_threshold: 3
   content_threshold: 2
   emoji_threshold: 3
+  
+  # Probabilistic trend following
+  enable_probabilistic: true     # Enable probability-based decisions
+  base_probability: 0.5          # Base chance when threshold is met (50%)
+  probability_boost_factor: 0.15 # Probability increase per excess count
+  max_probability: 0.95          # Maximum probability cap (95%)
 ```
 
 ## Discord Bot Features

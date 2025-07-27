@@ -52,6 +52,43 @@ class TrendFollowingHandler:
         
         self.logger.info("跟風功能處理器已初始化")
     
+    def should_follow_probabilistically(self, count: int, threshold: int) -> bool:
+        """機率性跟風決策
+        
+        Args:
+            count: 當前數量（reaction 數、重複次數等）
+            threshold: 最低閾值
+            
+        Returns:
+            bool: 是否跟風
+        """
+        # 如果沒有啟用機率性跟風，使用舊邏輯（硬閾值）
+        if not self.config.enable_probabilistic:
+            return count >= threshold
+        
+        # 未達最低閾值時不跟風
+        if count < threshold:
+            return False
+        
+        # 計算超出閾值的數量
+        excess_count = count - threshold
+        
+        # 計算機率：基礎機率 + 超出量 * 提升係數
+        probability = min(
+            self.config.max_probability,
+            self.config.base_probability + excess_count * self.config.probability_boost_factor
+        )
+        
+        # 機率決策
+        result = random.random() < probability
+        
+        self.logger.debug(
+            f"機率性跟風決策: count={count}, threshold={threshold}, "
+            f"excess={excess_count}, probability={probability:.2f}, result={result}"
+        )
+        
+        return result
+    
     def get_channel_lock(self, channel_id: int) -> asyncio.Lock:
         """獲取指定頻道的鎖
         
@@ -175,8 +212,8 @@ class TrendFollowingHandler:
             if not target_reaction:
                 return False
             
-            # 檢查 reaction 數量是否達到閾值
-            if target_reaction.count < self.config.reaction_threshold:
+            # 使用機率性決策檢查是否跟風
+            if not self.should_follow_probabilistically(target_reaction.count, self.config.reaction_threshold):
                 return False
             
             # 檢查機器人是否已經添加過這個 reaction
@@ -404,7 +441,8 @@ class TrendFollowingHandler:
             # 加上當前訊息的計數
             total_count = len(valid_segment) + 1
             
-            if total_count >= self.config.content_threshold:
+            # 使用機率性決策檢查是否跟風
+            if self.should_follow_probabilistically(total_count, self.config.content_threshold):
                 # 執行內容跟風
                 await self._send_content_response(content_type, content_value, message.channel)
                 self.update_cooldown(message.channel.id)
@@ -474,7 +512,8 @@ class TrendFollowingHandler:
             # 加上當前訊息的計數
             total_count = len(valid_segment) + 1
             
-            if total_count >= self.config.emoji_threshold:
+            # 使用機率性決策檢查是否跟風
+            if self.should_follow_probabilistically(total_count, self.config.emoji_threshold):
                 # 執行 emoji 跟風
                 response_emoji = await self._generate_emoji_response(message)
                 if response_emoji:
