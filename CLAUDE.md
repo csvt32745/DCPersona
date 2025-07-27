@@ -128,6 +128,13 @@ Count | Excess | Probability | Behavior
 - Progress observation management
 - State graph construction
 
+### LLM Instance Management
+The Discord Bot uses a simplified LLM classification system:
+- `smart_llm`: High-quality model (based on `final_answer` config) for complex reasoning tasks
+- `fast_llm`: Fast model (based on `tool_analysis` config) for quick decision-making
+- `wordle_llm`: Alias for `smart_llm` to maintain backward compatibility
+- Trend following uses `fast_llm` for optimal response time
+
 ### Emoji System Architecture
 DCPersona includes an intelligent emoji assistance system that enhances message expressiveness:
 - `output_media/emoji_types.py`: Type-safe emoji configuration with `EmojiConfig` dataclass
@@ -196,7 +203,7 @@ async for chunk in llm.astream(messages):
 # Trend following handler initialization (in bot startup)
 trend_following_handler = TrendFollowingHandler(
     config=config.trend_following,
-    llm=wordle_llm,
+    llm=fast_llm,  # Use fast_llm for optimal response time
     emoji_registry=emoji_handler
 )
 

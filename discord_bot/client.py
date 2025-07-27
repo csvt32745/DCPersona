@@ -55,8 +55,8 @@ class DCPersonaBot(commands.Bot):
         self.prompt_system = PromptSystem()
         self.emoji_handler = EmojiRegistry()
         
-        # 初始化 LLM（用於生成 Wordle 提示）
-        self._init_wordle_llm()
+        # 初始化 LLM 實例（smart_llm 和 fast_llm）
+        self._init_llm_instances()
         
         # 初始化跟風功能處理器
         self.trend_following_handler = None  # 將在 on_ready 中初始化
@@ -71,33 +71,58 @@ class DCPersonaBot(commands.Bot):
             "start_time": None
         }
     
-    def _init_wordle_llm(self):
-        """初始化用於 Wordle 提示生成的 LLM"""
+    def _init_llm_instances(self):
+        """初始化 smart_llm 和 fast_llm 實例"""
+        api_key = self.config.gemini_api_key
+        if not api_key:
+            self.logger.error("缺少 GEMINI_API_KEY，LLM 功能將無法使用")
+            self.smart_llm = None
+            self.fast_llm = None
+            self.wordle_llm = None
+            return
+        
         try:
-            api_key = self.config.gemini_api_key
-            if not api_key:
-                self.logger.error("缺少 GEMINI_API_KEY，Wordle 功能將無法使用")
-                self.wordle_llm = None
-                return
-                
-            # 使用 final_answer 配置來生成 Wordle 提示
-            llm_config = self.config.llm.models.get("final_answer")
-            if llm_config:
-                self.wordle_llm = ChatGoogleGenerativeAI(
-                    model=llm_config.model,
-                    temperature=llm_config.temperature,
+            # 初始化 smart_llm (基於 final_answer 配置)
+            final_answer_config = self.config.llm.models.get("final_answer")
+            if final_answer_config:
+                self.smart_llm = ChatGoogleGenerativeAI(
+                    model=final_answer_config.model,
+                    temperature=final_answer_config.temperature,
                     api_key=api_key
                 )
-                self.logger.info("Wordle LLM 初始化成功")
+                self.logger.info(f"Smart LLM 初始化成功: {final_answer_config.model}")
             else:
-                self.logger.warning("找不到 final_answer LLM 配置，使用預設配置")
-                self.wordle_llm = ChatGoogleGenerativeAI(
+                self.logger.warning("找不到 final_answer LLM 配置，smart_llm 使用預設配置")
+                self.smart_llm = ChatGoogleGenerativeAI(
                     model="gemini-2.0-flash-exp",
                     temperature=0.7,
                     api_key=api_key
                 )
+            
+            # 初始化 fast_llm (基於 tool_analysis 配置)
+            tool_analysis_config = self.config.llm.models.get("tool_analysis")
+            if tool_analysis_config:
+                self.fast_llm = ChatGoogleGenerativeAI(
+                    model=tool_analysis_config.model,
+                    temperature=tool_analysis_config.temperature,
+                    api_key=api_key
+                )
+                self.logger.info(f"Fast LLM 初始化成功: {tool_analysis_config.model}")
+            else:
+                self.logger.warning("找不到 tool_analysis LLM 配置，fast_llm 使用預設配置")
+                self.fast_llm = ChatGoogleGenerativeAI(
+                    model="gemini-2.0-flash-exp",
+                    temperature=0.3,
+                    api_key=api_key
+                )
+            
+            # 保持 wordle_llm 向後相容性
+            self.wordle_llm = self.smart_llm
+            
         except Exception as e:
-            self.logger.error(f"初始化 Wordle LLM 失敗: {e}")
+            self.logger.error(f"初始化 LLM 實例失敗: {e}")
+            self.smart_llm = None
+            self.fast_llm = None
             self.wordle_llm = None
     
     async def setup_hook(self):
@@ -133,7 +158,7 @@ class DCPersonaBot(commands.Bot):
         try:
             self.trend_following_handler = TrendFollowingHandler(
                 config=self.config.trend_following,
-                llm=self.wordle_llm,
+                llm=self.fast_llm,
                 emoji_registry=self.emoji_handler
             )
             if self.config.trend_following.enabled:
