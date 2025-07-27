@@ -418,7 +418,10 @@ This architecture enables a highly modular, type-safe, and extensible Discord AI
 - Bot 循環防護機制避免無限跟風
 - 配置驅動的行為控制，支援頻道白名單和冷卻時間
 - 與現有 emoji 註冊系統整合，提供智能 emoji 回應
-- 完整的單元測試覆蓋，包含 37 項測試案例
+- **延遲發送系統**: 隨機延遲 (0.5-3秒) 提升回應自然性
+- **重複防護機制**: 原子性操作防止延遲期間的重複發送
+- **分離處理架構**: Reaction 和 Message 活動獨立處理，可並行執行
+- 完整的單元測試覆蓋，包含 50+ 項測試案例
 
 **檔案位置**:
 - `discord_bot/trend_following.py`: 核心處理器實現
