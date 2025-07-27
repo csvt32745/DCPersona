@@ -1,0 +1,116 @@
+# DCPersona 更新記錄配置檔案
+# 簡化版格式：只包含日期、標題、項目列表
+# 基於實際 git 提交記錄更新
+
+updates:
+  - date: "2025-07-27"
+    title: "簡化版 Patchnote 功能實作"
+    items:
+      - "實作型別安全的 patchnote 資料結構定義"
+      - "新增 /patchnote Discord slash 指令支援"
+      - "簡化 YAML 格式，移除版本號複雜度"
+      - "支援 1-10 個更新記錄顯示範圍"
+      - "基於實際 Git 提交記錄更新歷史資料"
+
+  - date: "2025-07-27"
+    title: "UnifiedAgent 規劃和跟風功能強化"
+    items:
+      - "增強 UnifiedAgent 規劃和提醒功能"
+      - "實作機率性跟風決策系統，避免機械化回應"
+      - "修復跟風功能訊息處理格式問題"
+      - "解決跟風功能影響正常訊息回覆的問題"
+      - "完成 Discord Bot 跟風功能整體實作"
+
+  - date: "2025-07-23"
+    title: "Emoji 系統全面防護和記憶體優化"
+    items:
+      - "實作全面的 emoji 輸出錯誤防護和補償系統"
+      - "增強 Wordle emoji 整合和記憶體監控功能"
+      - "自動檢測和修復無效的 emoji 格式"
+      - "提供後備 emoji 替代方案"
+
+  - date: "2025-07-21"
+    title: "文檔和 Emoji 系統整合"
+    items:
+      - "更新 CLAUDE.md 改進文檔和 emoji 系統整合"
+      - "完善開發指南和架構說明"
+
+  - date: "2025-07-20"
+    title: "媒體處理架構重構"
+    items:
+      - "重構輸入和輸出媒體處理架構"
+      - "分離 input_media 和 output_media 模組"
+      - "提升程式碼可維護性和擴展性"
+
+  - date: "2025-07-19"
+    title: "Wordle 提示系統擴展"
+    items:
+      - "新增多種 Wordle 提示類型"
+      - "將部分提示移入範例目錄"
+      - "優化提示生成的多樣性"
+
+  - date: "2025-07-17"
+    title: "進度系統和 Emoji 處理優化"
+    items:
+      - "改進進度訊息結構和清晰度"
+      - "更新 emoji 使用說明提升清晰度"
+      - "增強提示上下文清晰度和用戶指導"
+      - "簡化 emoji 處理流程移除解析步驟"
+      - "實作 emoji 圖片記憶體快取和 LRU 淘汰機制"
+      - "修復進度階段枚舉轉換並整合 LLM 進度訊息"
+
+  - date: "2025-07-16"
+    title: "型別安全進度系統和 Emoji 配置"
+    items:
+      - "實作型別安全的可配置進度訊息系統"
+      - "新增 emoji 配置範例檔案"
+      - "實作訊息處理早期進度通知功能"
+
+  - date: "2025-07-15"
+    title: "Emoji 系統和訊息收集優化"
+    items:
+      - "優化訊息收集邏輯，回覆鏈改為歷史模式"
+      - "新增 emoji 配置和處理系統"
+      - "實作 DCPersona emoji 助手系統"
+
+  - date: "2025-07-14"
+    title: "UnifiedAgent 工具調用增強"
+    items:
+      - "增強 UnifiedAgent 的訊息處理和工具調用功能"
+      - "改進工具執行的可靠性和效率"
+
+  - date: "2025-07-13"
+    title: "測試覆蓋和進度管理優化"
+    items:
+      - "新增 agent_utils 和 common_utils 的全面測試覆蓋"
+      - "解決進度管理的競爭條件問題"
+      - "優化 Wordle 提示生成"
+
+  - date: "2025-07-09"
+    title: "Wordle 和工具追蹤系統"
+    items:
+      - "將 Wordle 提示回覆統一改為 Embed 形式"
+      - "增強工具進度追蹤和通知系統"
+      - "新增 YouTube 摘要工具進行影片內容提取"
+
+  - date: "2025-07-08"
+    title: "Wordle 指令模組化重構"
+    items:
+      - "重構 Wordle 提示指令為模組化結構"
+      - "增強 Wordle 提示生成的模組化風格和格式"
+      - "整合 Wordle 提示功能到 Slash Commands"
+
+  - date: "2025-06-22"
+    title: "多媒體支援和專案規範"
+    items:
+      - "全面支援 Emoji、Sticker、動畫與 Embed 媒體處理"
+      - "新增虛擬附件和 URL 內容型別推斷功能"
+      - "整合多媒體統一流程和媒體統計摘要"
+      - "新增編碼和專案規則文檔"
+
+  - date: "2025-06-16"
+    title: "提醒系統時區修復"
+    items:
+      - "修復提醒系統時區處理問題"
+      - "改進工具訊息處理"
+      - "清理事件檔案為未來更新做準備"
