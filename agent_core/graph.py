@@ -295,9 +295,13 @@ class UnifiedAgent(ProgressMixin):
             else:
                 # system_prompt = ""
                 system_prompt = self._build_planning_system_prompt(state.messages_global_metadata)
-                messages_for_llm = self._build_messages_for_llm(state.messages, system_prompt)
+                messages_for_llm = self._build_messages_for_llm(
+                    state.messages + [MsgNode(role="user", content="Please Generate a tool plan to gather the information or fulfill the user's request")], 
+                    system_prompt
+                )
                 self._log_messages(messages_for_llm, "messages_for_llm (planning)")
                 ai_message = await self.tool_analysis_llm.ainvoke(messages_for_llm)
+                logging.debug(ai_message.content)
                 
                 # 檢查是否有工具調用
                 if ai_message.tool_calls or youtube_tool_call:
@@ -695,7 +699,7 @@ class UnifiedAgent(ProgressMixin):
         )
         system_prompt = self.prompt_system.get_system_instructions(
             config=self.config,
-            messages_global_metadata=context_prompt + "\n\n" + messages_global_metadata
+            messages_global_metadata=messages_global_metadata + "\n\n" + context_prompt
         )
         return system_prompt
             
@@ -826,6 +830,8 @@ class UnifiedAgent(ProgressMixin):
             context = ""
             if tool_results:
                 context = "\n".join([f"搜尋結果: {result}" for result in tool_results])
+            else:
+                context = "本次問答沒有使用任何工具，請基於此事實跟 User 互動"
             
             # 構建系統提示詞和訊息列表
             system_prompt = self._build_final_system_prompt(context, state.messages_global_metadata)
