@@ -33,9 +33,8 @@ class PatchnoteUpdate:
         if not self.title.strip():
             raise ValueError("標題不能為空")
         
-        # 驗證至少有一個項目
-        if not self.items:
-            raise ValueError("更新項目不能為空")
+        # items 可以為空（當標題已包含完整資訊時）
+        # 不需要驗證 items 必須存在
 
 
 @dataclass

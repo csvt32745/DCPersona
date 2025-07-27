@@ -86,21 +86,31 @@ async def patchnote_command(
         
         # 5. 為每個更新新增 field
         for update in latest_updates:
-            # 組合更新項目為條列格式
-            items_text = "\n".join(f"• {item}" for item in update.items)
-            
-            # 限制 field value 長度（Discord Embed field 限制 1024 字元）
-            if len(items_text) > 1020:
-                items_text = items_text[:1017] + "..."
-                logger.warning(f"更新記錄 {update.date} 內容過長，已截斷")
-            
-            # 添加 field：name 為標題（含日期），value 為條列項目
-            field_name = f"{update.date}: {update.title}"
-            success_embed.add_field(
-                name=field_name,
-                value=items_text,
-                inline=False  # 每個更新獨佔一行
-            )
+            # 檢查是否有具體的更新項目
+            if update.items:
+                # 組合更新項目為條列格式
+                items_text = "\n".join(f"• {item}" for item in update.items)
+                
+                # 限制 field value 長度（Discord Embed field 限制 1024 字元）
+                if len(items_text) > 1020:
+                    items_text = items_text[:1017] + "..."
+                    logger.warning(f"更新記錄 {update.date} 內容過長，已截斷")
+                
+                # 添加 field：name 為標題（含日期），value 為條列項目
+                field_name = f"{update.date}: {update.title}"
+                success_embed.add_field(
+                    name=field_name,
+                    value=items_text,
+                    inline=False  # 每個更新獨佔一行
+                )
+            else:
+                # 當沒有具體項目時，直接使用標題作為完整更新內容
+                field_name = f"{update.date}: {update.title}"
+                success_embed.add_field(
+                    name=field_name,
+                    value="",  # 空值會讓 Discord 只顯示標題
+                    inline=False
+                )
         
         # 6. 添加頁腳資訊
         total_updates = len(config.updates)
