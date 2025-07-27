@@ -174,6 +174,11 @@ trend_following:
   base_probability: 0.5          # 達到閾值時的基礎機率（0.0-1.0）
   probability_boost_factor: 0.15 # 每超出閾值1個的機率提升量
   max_probability: 0.95          # 最大機率上限（建議保持<1.0維持隨機性）
+  
+  # 延遲發送配置
+  enable_random_delay: true     # 啟用隨機延遲發送（提升自然性）
+  min_delay_seconds: 0.5         # 最小延遲時間（秒）
+  max_delay_seconds: 10.0         # 最大延遲時間（秒）
 
 # 開發與測試配置
 development:

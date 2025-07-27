@@ -11,11 +11,32 @@ import re
 import time
 import random
 import asyncio
-from typing import Optional, List, Dict, Any
+from enum import Enum
+from typing import Optional, List, Dict, Any, Set, Tuple
 from langchain_google_genai import ChatGoogleGenerativeAI
 
 from schemas.config_types import TrendFollowingConfig
 from output_media.emoji_registry import EmojiRegistry
+
+
+class TrendActivityType(Enum):
+    """跟風活動類型"""
+    REACTION = "reaction"
+    CONTENT = "content"
+    EMOJI = "emoji"
+    
+    @property
+    def is_message_based(self) -> bool:
+        """是否為訊息類活動 (需要發送訊息)"""
+        return self in (TrendActivityType.CONTENT, TrendActivityType.EMOJI)
+    
+    def can_coexist_with(self, other: 'TrendActivityType') -> bool:
+        """檢查是否可以與另一種活動類型並存"""
+        # REACTION 可以與任何活動並存
+        if self == TrendActivityType.REACTION or other == TrendActivityType.REACTION:
+            return True
+        # CONTENT 和 EMOJI 不能並存
+        return False
 
 
 class TrendFollowingHandler:
@@ -45,7 +66,13 @@ class TrendFollowingHandler:
         self.last_response_times: Dict[int, float] = {}
         
         # 頻道鎖機制：防止併發處理導致重複發送
-        self.channel_locks: Dict[int, asyncio.Lock] = {}
+        # 分離的鎖機制 - reaction 和 message 可以並行處理
+        self.reaction_locks: Dict[int, asyncio.Lock] = {}
+        self.message_locks: Dict[int, asyncio.Lock] = {}
+        
+        # 分離的狀態管理：防止延遲期間重複發送
+        self.pending_message_activities: Dict[int, Set[TrendActivityType]] = {}  # CONTENT/EMOJI
+        self.pending_reaction_activities: Dict[int, bool] = {}  # REACTION
         
         # emoji 格式正則表達式：匹配 <:name:id> 或 <a:name:id>
         self.emoji_pattern = re.compile(r'<a?:[^:]+:\d+>')
@@ -89,18 +116,31 @@ class TrendFollowingHandler:
         
         return result
     
-    def get_channel_lock(self, channel_id: int) -> asyncio.Lock:
-        """獲取指定頻道的鎖
+    def get_reaction_lock(self, channel_id: int) -> asyncio.Lock:
+        """獲取指定頻道的 reaction 鎖
         
         Args:
             channel_id: 頻道 ID
             
         Returns:
-            asyncio.Lock: 頻道專用的異步鎖
+            asyncio.Lock: 頻道 reaction 專用的異步鎖
         """
-        if channel_id not in self.channel_locks:
-            self.channel_locks[channel_id] = asyncio.Lock()
-        return self.channel_locks[channel_id]
+        if channel_id not in self.reaction_locks:
+            self.reaction_locks[channel_id] = asyncio.Lock()
+        return self.reaction_locks[channel_id]
+    
+    def get_message_lock(self, channel_id: int) -> asyncio.Lock:
+        """獲取指定頻道的 message 鎖
+        
+        Args:
+            channel_id: 頻道 ID
+            
+        Returns:
+            asyncio.Lock: 頻道 message 專用的異步鎖
+        """
+        if channel_id not in self.message_locks:
+            self.message_locks[channel_id] = asyncio.Lock()
+        return self.message_locks[channel_id]
     
     def is_enabled_in_channel(self, channel_id: int) -> bool:
         """檢查跟風功能是否在指定頻道啟用
@@ -119,6 +159,39 @@ class TrendFollowingHandler:
             return True
         
         return channel_id in self.config.allowed_channels
+    
+    def _has_pending_message_activity(self, channel_id: int) -> bool:
+        """檢查是否有待處理的訊息活動"""
+        return channel_id in self.pending_message_activities and bool(self.pending_message_activities[channel_id])
+    
+    def _has_pending_reaction_activity(self, channel_id: int) -> bool:
+        """檢查是否有待處理的 reaction 活動"""
+        return channel_id in self.pending_reaction_activities
+    
+    def _mark_pending_message_activity(self, channel_id: int, activity_type: TrendActivityType) -> None:
+        """標記訊息活動為待處理"""
+        if not activity_type.is_message_based:
+            raise ValueError(f"活動類型 {activity_type} 不是訊息類活動")
+        
+        if channel_id not in self.pending_message_activities:
+            self.pending_message_activities[channel_id] = set()
+        self.pending_message_activities[channel_id].add(activity_type)
+    
+    def _mark_pending_reaction_activity(self, channel_id: int) -> None:
+        """標記 reaction 活動為待處理"""
+        self.pending_reaction_activities[channel_id] = True
+    
+    def _clear_pending_message_activity(self, channel_id: int, activity_type: TrendActivityType) -> None:
+        """清除待處理的訊息活動"""
+        if channel_id in self.pending_message_activities:
+            self.pending_message_activities[channel_id].discard(activity_type)
+            if not self.pending_message_activities[channel_id]:
+                del self.pending_message_activities[channel_id]
+    
+    def _clear_pending_reaction_activity(self, channel_id: int) -> None:
+        """清除待處理的 reaction 活動"""
+        if channel_id in self.pending_reaction_activities:
+            del self.pending_reaction_activities[channel_id]
     
     def is_in_cooldown(self, channel_id: int) -> bool:
         """檢查頻道是否在冷卻時間內
@@ -163,8 +236,8 @@ class TrendFollowingHandler:
         if payload.user_id == bot.user.id:
             return False
         
-        # 使用頻道鎖防止併發處理
-        lock = self.get_channel_lock(channel_id)
+        # 使用 reaction 專用鎖防止併發處理
+        lock = self.get_reaction_lock(channel_id)
         try:
             # 嘗試立即獲取鎖，如果無法獲取則跳過（避免阻塞）
             await asyncio.wait_for(lock.acquire(), timeout=0.1)
@@ -191,9 +264,16 @@ class TrendFollowingHandler:
         Returns:
             bool: 是否執行了跟風動作
         """
+        channel_id = payload.channel_id
+        
         try:
+            # 檢查是否有待處理的 reaction 活動
+            if self._has_pending_reaction_activity(channel_id):
+                self.logger.debug(f"跳過 reaction 跟風: 頻道 {channel_id} 有待處理的 reaction")
+                return False
+            
             # 獲取頻道和訊息
-            channel = bot.get_channel(payload.channel_id)
+            channel = bot.get_channel(channel_id)
             if not channel:
                 return False
             
@@ -221,12 +301,25 @@ class TrendFollowingHandler:
                 if reaction_user.id == bot.user.id:
                     return False  # 機器人已經添加過了
             
-            # 添加相同的 reaction
-            await message.add_reaction(payload.emoji)
-            self.update_cooldown(payload.channel_id)
+            # 標記 reaction 活動為待處理
+            self._mark_pending_reaction_activity(channel_id)
             
-            self.logger.info(f"執行 reaction 跟風: {payload.emoji} 在頻道 {payload.channel_id}")
-            return True
+            try:
+                # 可選的隨機延遲（reaction 延遲較短）
+                if self.config.enable_random_delay:
+                    delay = random.uniform(0.2, min(1.0, self.config.max_delay_seconds))
+                    await asyncio.sleep(delay)
+                
+                # 添加相同的 reaction
+                await message.add_reaction(payload.emoji)
+                self.update_cooldown(channel_id)
+                
+                self.logger.info(f"執行 reaction 跟風: {payload.emoji} 在頻道 {channel_id}")
+                return True
+                
+            finally:
+                # 清除待處理標記
+                self._clear_pending_reaction_activity(channel_id)
             
         except Exception as e:
             self.logger.error(f"Reaction 跟風邏輯執行失敗: {e}", exc_info=True)
@@ -252,8 +345,8 @@ class TrendFollowingHandler:
         if message.author.bot or message.author.id == bot.user.id:
             return False
         
-        # 使用頻道鎖防止併發處理
-        lock = self.get_channel_lock(channel_id)
+        # 使用 message 專用鎖防止併發處理
+        lock = self.get_message_lock(channel_id)
         try:
             # 嘗試立即獲取鎖，如果無法獲取則跳過（避免阻塞）
             await asyncio.wait_for(lock.acquire(), timeout=0.1)
@@ -280,21 +373,58 @@ class TrendFollowingHandler:
         Returns:
             bool: 是否執行了跟風動作
         """
+        channel_id = message.channel.id
+        
         try:
+            # 檢查是否有待處理的訊息活動
+            if self._has_pending_message_activity(channel_id):
+                self.logger.debug(f"跳過訊息跟風: 頻道 {channel_id} 有待處理的訊息活動")
+                return False
+            
             # 獲取訊息歷史（包含機器人訊息用於分析）
             history = await self._get_recent_messages(message.channel, bot.user.id)
             if len(history) < 1:  # 至少需要 1 條歷史訊息才能判斷
                 return False
             
+            # 決定要執行的活動類型和發送函數
+            selected_activity = None
+            send_func = None
+            send_args = None
+            
             # 優先級 1：內容跟風
-            if await self._try_content_following(message, history, bot.user.id):
-                return True
+            content_result = await self._check_content_following(message, history, bot.user.id)
+            if content_result:
+                activity_type, func, args = content_result
+                selected_activity, send_func, send_args = activity_type, func, args
+            else:
+                # 優先級 2：emoji 跟風
+                emoji_result = await self._check_emoji_following(message, history, bot.user.id)
+                if emoji_result:
+                    activity_type, func, args = emoji_result
+                    selected_activity, send_func, send_args = activity_type, func, args
             
-            # 優先級 2：emoji 跟風
-            if await self._try_emoji_following(message, history, bot.user.id):
-                return True
+            if not selected_activity:
+                return False
             
-            return False
+            # 標記活動為進行中
+            self._mark_pending_message_activity(channel_id, selected_activity)
+            
+            try:
+                # 延遲在鎖內執行（確保原子性）
+                if self.config.enable_random_delay:
+                    delay = random.uniform(self.config.min_delay_seconds, self.config.max_delay_seconds)
+                    await asyncio.sleep(delay)
+                
+                # 發送
+                await send_func(*send_args)
+                self.update_cooldown(channel_id)
+                
+                self.logger.info(f"執行 {selected_activity.value} 跟風在頻道 {channel_id}")
+                return True
+                
+            finally:
+                # 清理進行中標記
+                self._clear_pending_message_activity(channel_id, selected_activity)
             
         except Exception as e:
             self.logger.error(f"跟風邏輯執行失敗: {e}", exc_info=True)
@@ -330,6 +460,97 @@ class TrendFollowingHandler:
         except Exception as e:
             self.logger.error(f"獲取訊息歷史失敗: {e}")
             return []
+    
+    async def _check_content_following(self, message: discord.Message, history: List[dict], bot_user_id: int) -> Optional[tuple]:
+        """檢查是否應該執行內容跟風
+        
+        Args:
+            message: 當前訊息
+            history: 訊息歷史（包含元數據）
+            bot_user_id: 機器人用戶 ID
+            
+        Returns:
+            Optional[tuple]: (活動類型, 發送函數, 發送參數) 或 None
+        """
+        try:
+            # 獲取當前訊息的實際內容（可能是文字或 sticker）
+            content_type, content_value = self._get_message_content(message)
+            if not content_type:
+                return None
+            
+            # 提取有效的內容片段
+            valid_segment, has_bot_in_segment = self._extract_valid_content_segment(history, content_type, content_value)
+            
+            # 如果機器人已經參與了這個片段，不要跟風
+            if has_bot_in_segment:
+                content_desc = f"{content_type}:{content_value.id if content_type == 'sticker' else content_value}"
+                self.logger.debug(f"內容跟風被阻止：機器人已在片段中參與，內容: '{content_desc}'")
+                return None
+            
+            # 加上當前訊息的計數
+            total_count = len(valid_segment) + 1
+            
+            # 使用機率性決策檢查是否跟風
+            if self.should_follow_probabilistically(total_count, self.config.content_threshold):
+                return (
+                    TrendActivityType.CONTENT,
+                    self._send_content_response,
+                    (content_type, content_value, message.channel)
+                )
+            
+            return None
+            
+        except Exception as e:
+            self.logger.error(f"內容跟風檢查失敗: {e}")
+            return None
+    
+    async def _check_emoji_following(self, message: discord.Message, history: List[dict], bot_user_id: int) -> Optional[tuple]:
+        """檢查是否應該執行 emoji 跟風
+        
+        Args:
+            message: 當前訊息
+            history: 訊息歷史（包含元數據）
+            bot_user_id: 機器人用戶 ID
+            
+        Returns:
+            Optional[tuple]: (活動類型, 發送函數, 發送參數) 或 None
+        """
+        try:
+            # 檢查當前訊息是否只包含 emoji（只處理文字類型）
+            content_type, content_value = self._get_message_content(message)
+            if content_type != "text" or not self._is_emoji_only_message(content_value):
+                return None
+            
+            # 提取有效的 emoji 片段
+            valid_segment, has_bot_in_segment = self._extract_valid_emoji_segment(history)
+            
+            # 如果機器人已經參與了這個片段，不要跟風
+            if has_bot_in_segment:
+                self.logger.debug(f"Emoji 跟風被阻止：機器人已在片段中參與")
+                return None
+            
+            # 加上當前訊息的計數
+            total_count = len(valid_segment) + 1
+            
+            # 使用機率性決策檢查是否跟風
+            if self.should_follow_probabilistically(total_count, self.config.emoji_threshold):
+                return (
+                    TrendActivityType.EMOJI,
+                    self._send_emoji_response,
+                    (message,)
+                )
+            
+            return None
+            
+        except Exception as e:
+            self.logger.error(f"Emoji 跟風檢查失敗: {e}")
+            return None
+    
+    async def _send_emoji_response(self, message: discord.Message) -> None:
+        """發送 emoji 回應"""
+        response_emoji = await self._generate_emoji_response(message)
+        if response_emoji:
+            await message.channel.send(response_emoji)
     
     def _get_message_content(self, message: discord.Message) -> tuple:
         """獲取訊息的實際內容（優先 sticker，其次文字）

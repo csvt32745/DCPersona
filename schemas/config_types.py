@@ -268,6 +268,11 @@ class TrendFollowingConfig:
     base_probability: float = 0.5
     probability_boost_factor: float = 0.15
     max_probability: float = 0.95
+    
+    # 延遲發送配置
+    enable_random_delay: bool = False
+    min_delay_seconds: float = 0.5
+    max_delay_seconds: float = 3.0
 
 
 @dataclass

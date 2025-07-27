@@ -75,21 +75,30 @@ class TestTrendFollowingHandler:
         assert handler.llm is not None
         assert handler.emoji_registry is not None
         assert handler.last_response_times == {}
-        assert handler.channel_locks == {}
+        assert handler.reaction_locks == {}
+        assert handler.message_locks == {}
         assert handler.emoji_pattern is not None
     
-    def test_get_channel_lock(self, handler):
-        """測試頻道鎖獲取機制"""
+    def test_get_separate_locks(self, handler):
+        """測試分離鎖獲取機制"""
         channel_id = 123456789
         
-        # 第一次獲取應該創建新鎖
-        lock1 = handler.get_channel_lock(channel_id)
-        assert isinstance(lock1, asyncio.Lock)
-        assert channel_id in handler.channel_locks
+        # 第一次呼叫應該創建新鎖
+        reaction_lock1 = handler.get_reaction_lock(channel_id)
+        message_lock1 = handler.get_message_lock(channel_id)
+        assert isinstance(reaction_lock1, asyncio.Lock)
+        assert isinstance(message_lock1, asyncio.Lock)
+        assert channel_id in handler.reaction_locks
+        assert channel_id in handler.message_locks
         
-        # 第二次獲取應該返回相同的鎖
-        lock2 = handler.get_channel_lock(channel_id)
-        assert lock1 is lock2
+        # 第二次呼叫應該返回同一個鎖
+        reaction_lock2 = handler.get_reaction_lock(channel_id)
+        message_lock2 = handler.get_message_lock(channel_id)
+        assert reaction_lock1 is reaction_lock2
+        assert message_lock1 is message_lock2
+        
+        # reaction 和 message 鎖應該是不同的
+        assert reaction_lock1 is not message_lock1
     
     def test_is_enabled_in_channel(self, handler):
         """測試頻道啟用檢查"""
@@ -494,12 +503,12 @@ class TestConcurrencyAndLocking:
             assert results.count(False) == 2  # 兩個都會返回 False（因為 slow_processing 返回 False）
     
     @pytest.mark.asyncio
-    async def test_channel_lock_timeout(self, handler):
-        """測試頻道鎖超時機制"""
+    async def test_message_lock_timeout(self, handler):
+        """測試訊息鎖超時機制"""
         channel_id = 123456789
         
-        # 手動獲取並持有鎖
-        lock = handler.get_channel_lock(channel_id)
+        # 手動獲取並持有 message 鎖
+        lock = handler.get_message_lock(channel_id)
         await lock.acquire()
         
         try:
@@ -690,8 +699,8 @@ class TestIntegrationScenarios:
                 # Mock emoji 生成回應，因為 emoji 跟風會透過 LLM 生成新的 emoji
                 with patch.object(handler, '_generate_emoji_response', return_value="<:generated_emoji:987654321>"):
                     # 因為內容跟風優先級更高，需要確保不會觸發內容跟風
-                    # 設置 _try_content_following 返回 False，這樣才會進入 emoji 跟風
-                    with patch.object(handler, '_try_content_following', return_value=False):
+                    # 設置 _check_content_following 返回 None，這樣才會進入 emoji 跟風
+                    with patch.object(handler, '_check_content_following', return_value=None):
                         result = await handler.handle_message_following(message, bot)
                         
                         assert result is True
@@ -860,6 +869,362 @@ class TestProbabilisticTrendFollowing:
         # 超過閾值 1 個機率為 100%，應該總是 True
         results = [handler.should_follow_probabilistically(2, 1) for _ in range(50)]
         assert all(result is True for result in results)
+
+
+class TestDelayedSending:
+    """測試延遲發送功能"""
+    
+    def test_delay_config_disabled_by_default(self):
+        """測試延遲功能預設關閉"""
+        config = TrendFollowingConfig()
+        assert config.enable_random_delay is False
+        assert config.min_delay_seconds == 0.5
+        assert config.max_delay_seconds == 3.0
+    
+    @pytest.mark.asyncio
+    async def test_reaction_delay_functionality(self):
+        """測試 reaction 延遲功能"""
+        config = TrendFollowingConfig(
+            enabled=True,
+            allowed_channels=[123456789],
+            reaction_threshold=1,
+            enable_random_delay=True,
+            min_delay_seconds=0.1,
+            max_delay_seconds=0.2
+        )
+        handler = TrendFollowingHandler(config=config)
+        
+        # 模擬 Discord 對象
+        mock_bot = MagicMock()
+        mock_bot.user.id = 999
+        
+        mock_channel = AsyncMock()
+        mock_bot.get_channel.return_value = mock_channel
+        
+        mock_message = AsyncMock()
+        mock_message.add_reaction = AsyncMock()
+        mock_channel.fetch_message = AsyncMock(return_value=mock_message)
+        
+        mock_reaction = AsyncMock()
+        mock_reaction.emoji = "👍"  # 重要：emoji 必須匹配 payload.emoji
+        mock_reaction.count = 2
+        
+        # 模擬 reaction.users() 返回異步生成器，不包含 bot
+        class MockAsyncIterator:
+            def __init__(self):
+                self.users = [AsyncMock(id=111111111), AsyncMock(id=222222222)]
+                self.index = 0
+                
+            def __aiter__(self):
+                return self
+                
+            async def __anext__(self):
+                if self.index >= len(self.users):
+                    raise StopAsyncIteration
+                user = self.users[self.index]
+                self.index += 1
+                return user
+        
+        mock_reaction.users = Mock(return_value=MockAsyncIterator())
+        mock_message.reactions = [mock_reaction]
+        
+        # 模擬 payload
+        payload = MagicMock()
+        payload.channel_id = 123456789
+        payload.message_id = 987654321
+        payload.user_id = 555
+        payload.emoji = "👍"
+        
+        # 測試延遲執行
+        start_time = time.time()
+        # 由於機率性跟風，需要確保這次測試會成功
+        with patch.object(handler, 'should_follow_probabilistically', return_value=True):
+            result = await handler.handle_raw_reaction_following(payload, mock_bot)
+        end_time = time.time()
+        
+        assert result is True
+        assert end_time - start_time >= 0.1  # 至少延遲 0.1 秒
+        mock_message.add_reaction.assert_called_once_with(payload.emoji)
+    
+    @pytest.mark.asyncio 
+    async def test_message_delay_functionality(self, mock_llm, mock_emoji_registry):
+        """測試訊息延遲功能"""
+        config = TrendFollowingConfig(
+            enabled=True,
+            allowed_channels=[123456789],
+            content_threshold=1,
+            enable_random_delay=True,
+            min_delay_seconds=0.1,
+            max_delay_seconds=0.2
+        )
+        handler = TrendFollowingHandler(config=config, llm=mock_llm, emoji_registry=mock_emoji_registry)
+        
+        # 模擬 Discord 對象
+        mock_bot = MagicMock()
+        mock_bot.user.id = 999
+        
+        mock_channel = AsyncMock()
+        mock_channel.send = AsyncMock()
+        
+        # 設置訊息歷史以滿足內容跟風條件
+        mock_history_msg = AsyncMock()
+        mock_history_msg.author.bot = False
+        mock_history_msg.author.id = 888
+        mock_history_msg.content = "test content"
+        mock_history_msg.stickers = []
+        
+        async def mock_history_iter():
+            yield mock_history_msg
+        
+        mock_channel.history = Mock()
+        mock_channel.history.return_value = mock_history_iter()
+        
+        mock_message = AsyncMock()
+        mock_message.channel = mock_channel
+        mock_message.channel.id = 123456789
+        mock_message.author.bot = False
+        mock_message.author.id = 777
+        mock_message.content = "test content"  # 相同內容觸發跟風
+        mock_message.stickers = []
+        
+        # 設置歷史訊息（達到閾值且無 Bot 參與）
+        history = [
+            {'content_type': 'text', 'content_value': 'test content', 'is_bot': False, 'author_id': 888},
+        ]
+        
+        # 測試延遲執行
+        start_time = time.time()
+        with patch.object(handler, '_get_recent_messages', return_value=history):
+            # 由於機率性跟風，需要確保這次測試會成功
+            with patch.object(handler, 'should_follow_probabilistically', return_value=True):
+                result = await handler.handle_message_following(mock_message, mock_bot)
+        end_time = time.time()
+        
+        assert result is True
+        assert end_time - start_time >= 0.1  # 至少延遲 0.1 秒
+        mock_channel.send.assert_called_once_with("test content")
+
+
+class TestDuplicatePrevention:
+    """測試重複發送防護功能"""
+    
+    @pytest.mark.asyncio
+    async def test_pending_reaction_blocks_duplicate(self):
+        """測試待處理的 reaction 阻止重複"""
+        config = TrendFollowingConfig(
+            enabled=True,
+            allowed_channels=[123456789],
+            reaction_threshold=1
+        )
+        handler = TrendFollowingHandler(config=config)
+        
+        channel_id = 123456789
+        
+        # 手動標記為待處理
+        handler._mark_pending_reaction_activity(channel_id)
+        
+        # 檢查是否被阻止
+        assert handler._has_pending_reaction_activity(channel_id) is True
+        
+        # 清除標記
+        handler._clear_pending_reaction_activity(channel_id)
+        assert handler._has_pending_reaction_activity(channel_id) is False
+    
+    @pytest.mark.asyncio
+    async def test_pending_message_blocks_duplicate(self):
+        """測試待處理的訊息阻止重複"""
+        from discord_bot.trend_following import TrendActivityType
+        
+        config = TrendFollowingConfig(
+            enabled=True,
+            allowed_channels=[123456789]
+        )
+        handler = TrendFollowingHandler(config=config)
+        
+        channel_id = 123456789
+        
+        # 手動標記 CONTENT 為待處理
+        handler._mark_pending_message_activity(channel_id, TrendActivityType.CONTENT)
+        
+        # 檢查是否被阻止
+        assert handler._has_pending_message_activity(channel_id) is True
+        
+        # 清除標記
+        handler._clear_pending_message_activity(channel_id, TrendActivityType.CONTENT)
+        assert handler._has_pending_message_activity(channel_id) is False
+    
+    @pytest.mark.asyncio
+    async def test_concurrent_reactions_prevented(self):
+        """測試併發 reaction 被阻止"""
+        config = TrendFollowingConfig(
+            enabled=True,
+            allowed_channels=[123456789],
+            reaction_threshold=1,
+            enable_random_delay=True,
+            min_delay_seconds=0.2,
+            max_delay_seconds=0.3
+        )
+        handler = TrendFollowingHandler(config=config)
+        
+        # 模擬 Discord 對象
+        mock_bot = MagicMock()
+        mock_bot.user.id = 999
+        
+        mock_channel = AsyncMock()
+        mock_bot.get_channel.return_value = mock_channel
+        
+        mock_message = AsyncMock()
+        mock_message.add_reaction = AsyncMock()
+        mock_channel.fetch_message = AsyncMock(return_value=mock_message)
+        
+        mock_reaction = AsyncMock()
+        mock_reaction.emoji = "👍"  # 重要：emoji 必須匹配 payload.emoji
+        mock_reaction.count = 2
+        
+        # 模擬 reaction.users() 返回異步生成器，不包含 bot
+        class MockAsyncIterator:
+            def __init__(self):
+                self.users = [AsyncMock(id=111111111), AsyncMock(id=222222222)]
+                self.index = 0
+                
+            def __aiter__(self):
+                return self
+                
+            async def __anext__(self):
+                if self.index >= len(self.users):
+                    raise StopAsyncIteration
+                user = self.users[self.index]
+                self.index += 1
+                return user
+        
+        mock_reaction.users = Mock(return_value=MockAsyncIterator())
+        mock_message.reactions = [mock_reaction]
+        
+        payload1 = MagicMock()
+        payload1.channel_id = 123456789
+        payload1.message_id = 987654321
+        payload1.user_id = 555
+        payload1.emoji = "👍"
+        
+        payload2 = MagicMock()
+        payload2.channel_id = 123456789
+        payload2.message_id = 987654321
+        payload2.user_id = 666
+        payload2.emoji = "👍"
+        
+        # 併發執行兩個 reaction 跟風
+        with patch.object(handler, 'should_follow_probabilistically', return_value=True):
+            tasks = [
+                asyncio.create_task(handler.handle_raw_reaction_following(payload1, mock_bot)),
+                asyncio.create_task(handler.handle_raw_reaction_following(payload2, mock_bot))
+            ]
+            
+            results = await asyncio.gather(*tasks)
+        
+        # 只有一個應該成功，另一個應該被阻止
+        success_count = sum(1 for result in results if result is True)
+        assert success_count == 1
+        assert mock_message.add_reaction.call_count == 1
+    
+    @pytest.mark.asyncio
+    async def test_reaction_and_message_can_coexist(self, mock_llm, mock_emoji_registry):
+        """測試 reaction 和 message 可以並存"""
+        config = TrendFollowingConfig(
+            enabled=True,
+            allowed_channels=[123456789],
+            reaction_threshold=1,
+            content_threshold=1,
+            enable_random_delay=True,
+            min_delay_seconds=0.1,
+            max_delay_seconds=0.2
+        )
+        handler = TrendFollowingHandler(config=config, llm=mock_llm, emoji_registry=mock_emoji_registry)
+        
+        # 模擬 Discord 對象
+        mock_bot = MagicMock()
+        mock_bot.user.id = 999
+        
+        # 設置 reaction 相關 mock
+        mock_channel = AsyncMock()
+        mock_bot.get_channel.return_value = mock_channel
+        
+        mock_message_for_reaction = AsyncMock()
+        mock_message_for_reaction.add_reaction = AsyncMock()
+        mock_channel.fetch_message = AsyncMock(return_value=mock_message_for_reaction)
+        
+        mock_reaction = AsyncMock()
+        mock_reaction.emoji = "👍"  # 重要：emoji 必須匹配 payload.emoji
+        mock_reaction.count = 2
+        
+        # 模擬 reaction.users() 返回異步生成器，不包含 bot
+        class MockAsyncIterator:
+            def __init__(self):
+                self.users = [AsyncMock(id=111111111), AsyncMock(id=222222222)]
+                self.index = 0
+                
+            def __aiter__(self):
+                return self
+                
+            async def __anext__(self):
+                if self.index >= len(self.users):
+                    raise StopAsyncIteration
+                user = self.users[self.index]
+                self.index += 1
+                return user
+        
+        mock_reaction.users = Mock(return_value=MockAsyncIterator())
+        mock_message_for_reaction.reactions = [mock_reaction]
+        
+        # 設置 message 相關 mock
+        mock_channel_for_message = AsyncMock()
+        mock_channel_for_message.send = AsyncMock()
+        
+        mock_history_msg = AsyncMock()
+        mock_history_msg.author.bot = False
+        mock_history_msg.author.id = 888
+        mock_history_msg.content = "test content"
+        mock_history_msg.stickers = []
+        
+        async def mock_history_iter():
+            yield mock_history_msg
+        
+        mock_channel_for_message.history = Mock()
+        mock_channel_for_message.history.return_value = mock_history_iter()
+        
+        mock_message = AsyncMock()
+        mock_message.channel = mock_channel_for_message
+        mock_message.channel.id = 123456789
+        mock_message.author.bot = False
+        mock_message.author.id = 777
+        mock_message.content = "test content"
+        mock_message.stickers = []
+        
+        # 準備 payload
+        payload = MagicMock()
+        payload.channel_id = 123456789
+        payload.message_id = 987654321
+        payload.user_id = 555
+        payload.emoji = "👍"
+        
+        # 設置歷史訊息 for message 跟風
+        history = [
+            {'content_type': 'text', 'content_value': 'test content', 'is_bot': False, 'author_id': 888},
+        ]
+        
+        # 併發執行 reaction 和 message 跟風
+        with patch.object(handler, 'should_follow_probabilistically', return_value=True):
+            with patch.object(handler, '_get_recent_messages', return_value=history):
+                tasks = [
+                    asyncio.create_task(handler.handle_raw_reaction_following(payload, mock_bot)),
+                    asyncio.create_task(handler.handle_message_following(mock_message, mock_bot))
+                ]
+                
+                results = await asyncio.gather(*tasks)
+        
+        # 兩者都應該成功（因為它們是分離的）
+        assert all(result is True for result in results)
+        mock_message_for_reaction.add_reaction.assert_called_once()
+        mock_channel_for_message.send.assert_called_once()
 
 
 if __name__ == "__main__":
