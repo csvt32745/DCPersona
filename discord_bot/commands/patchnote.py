@@ -77,38 +77,32 @@ async def patchnote_command(
             await interaction.followup.send(embed=empty_embed)
             return
 
-        # 4. 格式化輸出
-        description_parts = []
-        
-        for update in latest_updates:
-            # 日期和標題
-            update_header = f"🗓️ {update.date} - {update.title}"
-            description_parts.append(update_header)
-            
-            # 更新項目
-            for item in update.items:
-                description_parts.append(f"• {item}")
-            
-            # 在每個更新之間加空行（除了最後一個）
-            if update != latest_updates[-1]:
-                description_parts.append("")
-
-        # 組合最終描述
-        description = "\n".join(description_parts)
-        
-        # 限制描述長度（Discord Embed 限制）
-        if len(description) > 4000:
-            description = description[:3997] + "..."
-            logger.warning("更新記錄內容過長，已截斷")
-
-        # 5. 發送回應
+        # 4. 建立 Embed 回應
+        bot_name = bot.user.name
         success_embed = discord.Embed(
-            title="📝 DCPersona 更新記錄",
-            description=description,
+            title=f"📝 {bot_name} 更新記錄",
             color=discord.Color.green(),
         )
         
-        # 添加頁腳資訊
+        # 5. 為每個更新新增 field
+        for update in latest_updates:
+            # 組合更新項目為條列格式
+            items_text = "\n".join(f"• {item}" for item in update.items)
+            
+            # 限制 field value 長度（Discord Embed field 限制 1024 字元）
+            if len(items_text) > 1020:
+                items_text = items_text[:1017] + "..."
+                logger.warning(f"更新記錄 {update.date} 內容過長，已截斷")
+            
+            # 添加 field：name 為標題（含日期），value 為條列項目
+            field_name = f"{update.date}: {update.title}"
+            success_embed.add_field(
+                name=field_name,
+                value=items_text,
+                inline=False  # 每個更新獨佔一行
+            )
+        
+        # 6. 添加頁腳資訊
         total_updates = len(config.updates)
         if total_updates > count:
             success_embed.set_footer(text=f"顯示最新 {count} 個更新 (共 {total_updates} 個)")
