@@ -30,13 +30,6 @@ class TrendActivityType(Enum):
         """是否為訊息類活動 (需要發送訊息)"""
         return self in (TrendActivityType.CONTENT, TrendActivityType.EMOJI)
     
-    def can_coexist_with(self, other: 'TrendActivityType') -> bool:
-        """檢查是否可以與另一種活動類型並存"""
-        # REACTION 可以與任何活動並存
-        if self == TrendActivityType.REACTION or other == TrendActivityType.REACTION:
-            return True
-        # CONTENT 和 EMOJI 不能並存
-        return False
 
 
 class TrendFollowingHandler:
@@ -76,6 +69,9 @@ class TrendFollowingHandler:
         
         # emoji 格式正則表達式：匹配 <:name:id> 或 <a:name:id>
         self.emoji_pattern = re.compile(r'<a?:[^:]+:\d+>')
+        
+        # 統一的 fallback emoji 列表
+        self.fallback_emojis = ["😄", "👍", "❤️", "😊", "🎉"]
         
         self.logger.info("跟風功能處理器已初始化")
     
@@ -410,6 +406,16 @@ class TrendFollowingHandler:
             self._mark_pending_message_activity(channel_id, selected_activity)
             
             try:
+                # 如果是emoji跟風，先預生成回應（避免延遲期間的LLM等待）
+                if selected_activity == TrendActivityType.EMOJI:
+                    # 提前生成emoji回應
+                    response_emoji = await self._generate_emoji_response(send_args[0])
+                    if not response_emoji:
+                        return False
+                    # 更新發送參數為預生成的emoji
+                    send_args = (send_args[0].channel, response_emoji)
+                
+                    send_func = self._send_pregenerated_emoji
                 # 延遲在鎖內執行（確保原子性）
                 if self.config.enable_random_delay:
                     delay = random.uniform(self.config.min_delay_seconds, self.config.max_delay_seconds)
@@ -536,7 +542,7 @@ class TrendFollowingHandler:
             if self.should_follow_probabilistically(total_count, self.config.emoji_threshold):
                 return (
                     TrendActivityType.EMOJI,
-                    self._send_emoji_response,
+                    self._send_pregenerated_emoji,
                     (message,)
                 )
             
@@ -546,11 +552,9 @@ class TrendFollowingHandler:
             self.logger.error(f"Emoji 跟風檢查失敗: {e}")
             return None
     
-    async def _send_emoji_response(self, message: discord.Message) -> None:
-        """發送 emoji 回應"""
-        response_emoji = await self._generate_emoji_response(message)
-        if response_emoji:
-            await message.channel.send(response_emoji)
+    async def _send_pregenerated_emoji(self, channel, emoji: str) -> None:
+        """發送預生成的 emoji 回應"""
+        await channel.send(emoji)
     
     def _get_message_content(self, message: discord.Message) -> tuple:
         """獲取訊息的實際內容（優先 sticker，其次文字）
@@ -633,50 +637,6 @@ class TrendFollowingHandler:
         
         return valid_segment, has_bot_in_segment
     
-    async def _try_content_following(self, message: discord.Message, history: List[dict], bot_user_id: int) -> bool:
-        """嘗試內容跟風
-        
-        Args:
-            message: 當前訊息
-            history: 訊息歷史（包含元數據）
-            bot_user_id: 機器人用戶 ID
-            
-        Returns:
-            bool: 是否執行了內容跟風
-        """
-        try:
-            # 獲取當前訊息的實際內容（可能是文字或 sticker）
-            content_type, content_value = self._get_message_content(message)
-            if not content_type:
-                return False
-            
-            # 提取有效的內容片段
-            valid_segment, has_bot_in_segment = self._extract_valid_content_segment(history, content_type, content_value)
-            
-            # 如果機器人已經參與了這個片段，不要跟風
-            if has_bot_in_segment:
-                content_desc = f"{content_type}:{content_value.id if content_type == 'sticker' else content_value}"
-                self.logger.debug(f"內容跟風被阻止：機器人已在片段中參與，內容: '{content_desc}'")
-                return False
-            
-            # 加上當前訊息的計數
-            total_count = len(valid_segment) + 1
-            
-            # 使用機率性決策檢查是否跟風
-            if self.should_follow_probabilistically(total_count, self.config.content_threshold):
-                # 執行內容跟風
-                await self._send_content_response(content_type, content_value, message.channel)
-                self.update_cooldown(message.channel.id)
-                
-                content_desc = f"{content_type}:{content_value.id if content_type == 'sticker' else content_value}"
-                self.logger.info(f"執行內容跟風: '{content_desc}' 在頻道 {message.channel.id} (片段長度: {total_count})")
-                return True
-            
-            return False
-            
-        except Exception as e:
-            self.logger.error(f"內容跟風處理失敗: {e}")
-            return False
     
     async def _send_content_response(self, content_type: str, content_value, channel) -> None:
         """發送內容回應（處理文字或 sticker）
@@ -705,50 +665,6 @@ class TrendFollowingHandler:
             except:
                 pass  # 如果連備用方案都失敗，就靜默忽略
     
-    async def _try_emoji_following(self, message: discord.Message, history: List[dict], bot_user_id: int) -> bool:
-        """嘗試 emoji 跟風
-        
-        Args:
-            message: 當前訊息
-            history: 訊息歷史（包含元數據）
-            bot_user_id: 機器人用戶 ID
-            
-        Returns:
-            bool: 是否執行了 emoji 跟風
-        """
-        try:
-            # 檢查當前訊息是否只包含 emoji（只處理文字類型）
-            content_type, content_value = self._get_message_content(message)
-            if content_type != "text" or not self._is_emoji_only_message(content_value):
-                return False
-            
-            # 提取有效的 emoji 片段
-            valid_segment, has_bot_in_segment = self._extract_valid_emoji_segment(history)
-            
-            # 如果機器人已經參與了這個片段，不要跟風
-            if has_bot_in_segment:
-                self.logger.debug(f"Emoji 跟風被阻止：機器人已在片段中參與")
-                return False
-            
-            # 加上當前訊息的計數
-            total_count = len(valid_segment) + 1
-            
-            # 使用機率性決策檢查是否跟風
-            if self.should_follow_probabilistically(total_count, self.config.emoji_threshold):
-                # 執行 emoji 跟風
-                response_emoji = await self._generate_emoji_response(message)
-                if response_emoji:
-                    await message.channel.send(response_emoji)
-                    self.update_cooldown(message.channel.id)
-                    
-                    self.logger.info(f"執行 emoji 跟風: '{response_emoji}' 在頻道 {message.channel.id} (片段長度: {total_count})")
-                    return True
-            
-            return False
-            
-        except Exception as e:
-            self.logger.error(f"Emoji 跟風處理失敗: {e}")
-            return False
     
     def _is_emoji_only_message(self, content: str) -> bool:
         """檢查訊息是否只包含 emoji
@@ -779,18 +695,14 @@ class TrendFollowingHandler:
         """
         try:
             if not self.llm or not self.emoji_registry:
-                # 如果沒有 LLM 或 emoji 註冊器，隨機選擇一個常見的 emoji
-                fallback_emojis = ["😄", "👍", "❤️", "😊", "🎉"]
-                return random.choice(fallback_emojis)
+                return random.choice(self.fallback_emojis)
             
             # 建立 emoji 上下文
             guild_id = message.guild.id if message.guild else None
             emoji_context = self.emoji_registry.build_prompt_context(guild_id)
             
             if not emoji_context:
-                # 如果沒有可用的 emoji 上下文，使用 fallback
-                fallback_emojis = ["😄", "👍", "❤️", "😊", "🎉"]
-                return random.choice(fallback_emojis)
+                return random.choice(self.fallback_emojis)
             
             # 建立 LLM 提示
             prompt = f"""你正在參與一個 Discord 頻道的 emoji 跟風活動。最近有多條訊息都只包含 emoji，現在需要你選擇一個適合的 emoji 來回應。
@@ -803,7 +715,7 @@ class TrendFollowingHandler:
             
             response = await self.llm.ainvoke(prompt)
             content = response.content.strip()
-            logging.info(f"Emoji 回應: {content}")
+            self.logger.info(f"Emoji 回應: {content}")
             
             # 驗證回應是否包含有效的 emoji 格式
             emoji_matches = self.emoji_pattern.findall(content)
@@ -811,11 +723,9 @@ class TrendFollowingHandler:
                 return emoji_matches[0]  # 返回第一個找到的 emoji
             
             # 如果 LLM 回應無效，使用 fallback
-            fallback_emojis = ["😄", "👍", "❤️", "😊", "🎉"]
-            return random.choice(fallback_emojis)
+            return random.choice(self.fallback_emojis)
             
         except Exception as e:
             self.logger.error(f"生成 emoji 回應失敗: {e}")
             # 異常時使用 fallback
-            fallback_emojis = ["😄", "👍", "❤️", "😊", "🎉"]
-            return random.choice(fallback_emojis)
+            return random.choice(self.fallback_emojis)

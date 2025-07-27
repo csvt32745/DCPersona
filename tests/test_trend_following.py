@@ -551,9 +551,9 @@ class TestBotLoopPrevention:
         bot.user.id = 999999999
         
         with patch.object(handler, '_get_recent_messages', return_value=history):
-            result = await handler._try_content_following(message, history, 999999999)
+            result = await handler._check_content_following(message, history, 999999999)
             
-            assert result is False
+            assert result is None  # 新的 API 返回 None 而非 False
     
     @pytest.mark.asyncio
     async def test_emoji_following_blocked_by_bot_participation(self, handler):
@@ -575,9 +575,9 @@ class TestBotLoopPrevention:
         bot.user.id = 999999999
         
         with patch.object(handler, '_get_recent_messages', return_value=history):
-            result = await handler._try_emoji_following(message, history, 999999999)
+            result = await handler._check_emoji_following(message, history, 999999999)
             
-            assert result is False
+            assert result is None  # 新的 API 返回 None 而非 False
 
 
 class TestConfigurationDrivenBehavior:
