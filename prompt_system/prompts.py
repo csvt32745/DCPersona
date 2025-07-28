@@ -42,6 +42,10 @@ class PromptSystem:
         self.persona_cache_enabled = persona_cache_enabled
         self._persona_cache: Dict[str, str] = {}
         self.logger = logging.getLogger(__name__)
+        
+        # 定時切換相關狀態
+        self._last_persona_switch_time: Optional[datetime] = None
+        self._current_timed_persona: Optional[str] = None
     
     def get_prompt(self, filename: Union[str, Path]) -> str:
         """讀取並回傳指定檔案內容"""
@@ -277,12 +281,45 @@ class PromptSystem:
             self.logger.error(f"獲取可用 persona 時出錯: {e}")
             return []
     
-    def get_random_persona_name(self) -> str:
-        """獲取隨機 persona 名稱"""
-        available_personas = self.get_available_personas()
-        if available_personas:
-            return random.choice(available_personas)
-        return ""
+    def get_random_persona_name(self, config: Optional['AppConfig'] = None) -> str:
+        """
+        獲取 persona 名稱（支援定時切換）
+        
+        Args:
+            config: 應用配置，用於獲取切換間隔設置
+            
+        Returns:
+            str: persona 名稱
+        """
+        # 如果沒有提供配置，使用原有的隨機邏輯
+        if not config or not config.prompt_system.persona.random_selection:
+            available_personas = self.get_available_personas()
+            if available_personas:
+                return random.choice(available_personas)
+            return ""
+        
+        # 定時切換邏輯
+        persona_cfg = config.prompt_system.persona
+        now = datetime.now()
+        
+        # 檢查是否需要切換（首次使用或達到切換間隔）
+        should_switch = (
+            self._last_persona_switch_time is None or
+            self._current_timed_persona is None or
+            (now - self._last_persona_switch_time).total_seconds() >= persona_cfg.switch_interval_minutes * 60
+        )
+        
+        if should_switch:
+            # 選擇新的 persona
+            available_personas = self.get_available_personas()
+            if available_personas:
+                self._current_timed_persona = random.choice(available_personas)
+                self._last_persona_switch_time = now
+                self.logger.info(f"切換到新 persona: {self._current_timed_persona}")
+            else:
+                return ""
+        
+        return self._current_timed_persona or ""
     
     def get_cache_stats(self) -> Dict[str, Any]:
         """獲取快取統計資訊"""

@@ -240,7 +240,7 @@ class UnifiedAgent(ProgressMixin):
             # ★ 新增：確定 current_persona（在第一個節點處理）
             if not state.current_persona:
                 if self.config.prompt_system.persona.random_selection:
-                    state.current_persona = self.prompt_system.get_random_persona_name()
+                    state.current_persona = self.prompt_system.get_random_persona_name(self.config)
                 else:
                     state.current_persona = self.config.prompt_system.persona.default_persona
             

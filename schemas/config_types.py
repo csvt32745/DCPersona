@@ -173,6 +173,7 @@ class PromptPersonaConfig:
     default_persona: str = "default"
     persona_directory: str = "persona"
     fallback: str = "你是一個有用的 AI 助手。"
+    switch_interval_minutes: int = 30  # 定時切換間隔（分鐘），當 random_selection=True 時生效
 
 
 @dataclass

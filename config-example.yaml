@@ -103,6 +103,7 @@ prompt_system:
     cache_personas: true   # 是否快取 Persona
     default_persona: "uika2"  # 預設 Persona 名稱（不包含 .txt）
     persona_directory: "persona"  # Persona 檔案目錄
+    switch_interval_minutes: 30  # 定時切換間隔（分鐘），當 random_selection=true 時生效
   
   # Discord 整合配置
   discord_integration:
