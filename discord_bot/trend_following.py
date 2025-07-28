@@ -70,8 +70,31 @@ class TrendFollowingHandler:
         # emoji 格式正則表達式：匹配 <:name:id> 或 <a:name:id>
         self.emoji_pattern = re.compile(r'<a?:[^:]+:\d+>')
         
-        # 統一的 fallback emoji 列表
-        self.fallback_emojis = ["😄", "👍", "❤️", "😊", "🎉"]
+        # Unicode emoji 正則表達式：匹配所有 Unicode emoji
+        self.unicode_emoji_pattern = re.compile(
+            "["
+            "\U0001F1E0-\U0001F1FF"  # flags (iOS)
+            "\U0001F300-\U0001F5FF"  # symbols & pictographs
+            "\U0001F600-\U0001F64F"  # emoticons
+            "\U0001F680-\U0001F6FF"  # transport & map symbols
+            "\U0001F700-\U0001F77F"  # alchemical symbols
+            "\U0001F780-\U0001F7FF"  # Geometric Shapes Extended
+            "\U0001F800-\U0001F8FF"  # Supplemental Arrows-C
+            "\U0001F900-\U0001F9FF"  # Supplemental Symbols and Pictographs
+            "\U0001FA00-\U0001FA6F"  # Chess Symbols
+            "\U0001FA70-\U0001FAFF"  # Symbols and Pictographs Extended-A
+            "\U00002702-\U000027B0"  # Dingbats
+            "\U00002190-\U000021FF"  # Arrows
+            "\U00002600-\U000026FF"  # Miscellaneous Symbols
+            "\U00002700-\U000027BF"  # Dingbats
+            "]+"
+        )
+        
+        # 統一的 fallback emoji 列表（支援更多 Unicode emoji）
+        self.fallback_emojis = [
+            "😄", "👍", "❤️", "😊", "🎉", "😂", "🔥", "💯", 
+            "👌", "😍", "🤔", "😅", "🙌", "💪", "🚀", "✨"
+        ]
         
         self.logger.info("跟風功能處理器已初始化")
     
@@ -408,8 +431,8 @@ class TrendFollowingHandler:
             try:
                 # 如果是emoji跟風，先預生成回應（避免延遲期間的LLM等待）
                 if selected_activity == TrendActivityType.EMOJI:
-                    # 提前生成emoji回應
-                    response_emoji = await self._generate_emoji_response(send_args[0])
+                    # 提前生成emoji回應，傳入bot_user_id
+                    response_emoji = await self._generate_emoji_response(send_args[0], bot.user.id)
                     if not response_emoji:
                         return False
                     # 更新發送參數為預生成的emoji
@@ -436,12 +459,61 @@ class TrendFollowingHandler:
             self.logger.error(f"跟風邏輯執行失敗: {e}", exc_info=True)
             return False
     
-    async def _get_recent_messages(self, channel: discord.TextChannel, bot_user_id: int) -> List[dict]:
+    def _process_message_text_for_context(self, msg: discord.Message, bot_user_id: int) -> Optional[str]:
+        """輕量化處理訊息文字內容用於上下文生成
+        
+        Args:
+            msg: Discord 訊息物件
+            bot_user_id: 機器人用戶 ID
+            
+        Returns:
+            Optional[str]: 處理後的文字內容，None 表示無有效文字
+        """
+        try:
+            # 獲取基本文字內容
+            text_parts = []
+            
+            # 處理訊息文字內容
+            if msg.content:
+                cleaned_content = msg.content
+                # 移除 bot 提及
+                if cleaned_content.startswith(f'<@{bot_user_id}>'):
+                    cleaned_content = cleaned_content.replace(f'<@{bot_user_id}>', '').strip()
+                if cleaned_content.startswith(f'<@!{bot_user_id}>'):
+                    cleaned_content = cleaned_content.replace(f'<@!{bot_user_id}>', '').strip()
+                
+                # 只有非 bot 訊息才加上用戶名稱
+                if not (msg.author.bot or msg.author.id == bot_user_id):
+                    cleaned_content = f"{msg.author.display_name}: {cleaned_content}"
+                
+                if cleaned_content:
+                    text_parts.append(cleaned_content)
+            
+            # 處理 embed 文字內容
+            for embed in msg.embeds:
+                embed_text = "\n".join(filter(None, [
+                    embed.title,
+                    embed.description,
+                    getattr(embed.footer, "text", None)
+                ]))
+                if embed_text:
+                    text_parts.append(embed_text)
+            
+            # 合併文字內容
+            full_text = "\n".join(text_parts).strip()
+            return full_text if full_text else None
+            
+        except Exception as e:
+            self.logger.error(f"處理訊息文字時出錯: {e}")
+            return None
+
+    async def _get_recent_messages(self, channel: discord.TextChannel, bot_user_id: int, include_text_content: bool = False) -> List[dict]:
         """獲取最近的訊息內容和元數據
         
         Args:
             channel: Discord 頻道
             bot_user_id: 機器人的用戶 ID
+            include_text_content: 是否包含處理後的文字內容用於上下文
             
         Returns:
             List[dict]: 最近的訊息列表，包含內容、sticker 和是否為機器人訊息的資訊
@@ -453,12 +525,19 @@ class TrendFollowingHandler:
                 content_type, content_value = self._get_message_content(msg)
                 
                 if content_type:  # 只要有內容（文字或 sticker）就保留
-                    messages.append({
+                    message_data = {
                         'content_type': content_type,
                         'content_value': content_value,
                         'is_bot': msg.author.bot or msg.author.id == bot_user_id,
                         'author_id': msg.author.id
-                    })
+                    }
+                    
+                    # 如果需要文字上下文，額外處理文字內容
+                    if include_text_content:
+                        text_content = self._process_message_text_for_context(msg, bot_user_id)
+                        message_data['text_content'] = text_content
+                    
+                    messages.append(message_data)
             
             # 移除第一條（當前訊息）並反轉順序（最舊的在前）
             return messages[1:][::-1] if len(messages) > 1 else []
@@ -667,7 +746,7 @@ class TrendFollowingHandler:
     
     
     def _is_emoji_only_message(self, content: str) -> bool:
-        """檢查訊息是否只包含 emoji
+        """檢查訊息是否只包含 emoji (支援 Discord 格式和 Unicode emoji)
         
         Args:
             content: 訊息內容
@@ -678,17 +757,26 @@ class TrendFollowingHandler:
         if not content:
             return False
         
-        # 移除所有 emoji 格式，檢查是否還有其他內容
-        content_without_emojis = self.emoji_pattern.sub('', content).strip()
+        # 移除所有 Discord 格式 emoji
+        content_without_discord_emojis = self.emoji_pattern.sub('', content).strip()
         
-        # 如果移除 emoji 後還有內容，則不是純 emoji 訊息
-        return len(content_without_emojis) == 0 and len(self.emoji_pattern.findall(content)) > 0
+        # 移除所有 Unicode emoji
+        content_without_unicode_emojis = self.unicode_emoji_pattern.sub('', content_without_discord_emojis).strip()
+        
+        # 檢查是否有找到任何 emoji
+        discord_emojis = self.emoji_pattern.findall(content)
+        unicode_emojis = self.unicode_emoji_pattern.findall(content)
+        
+        # 如果移除所有 emoji 後沒有內容，且至少有一個 emoji，則是純 emoji 訊息
+        return (len(content_without_unicode_emojis) == 0 and 
+                (len(discord_emojis) > 0 or len(unicode_emojis) > 0))
     
-    async def _generate_emoji_response(self, message: discord.Message) -> Optional[str]:
-        """使用 LLM 生成 emoji 回應
+    async def _generate_emoji_response(self, message: discord.Message, bot_user_id: int) -> Optional[str]:
+        """使用 LLM 生成 emoji 回應（整合對話上下文）
         
         Args:
             message: Discord 訊息
+            bot_user_id: 機器人用戶 ID
             
         Returns:
             Optional[str]: 生成的 emoji 回應
@@ -701,16 +789,39 @@ class TrendFollowingHandler:
             guild_id = message.guild.id if message.guild else None
             emoji_context = self.emoji_registry.build_prompt_context(guild_id)
             
-            if not emoji_context:
+            history = await self._get_recent_messages(message.channel, bot_user_id, include_text_content=True)
+            
+            # 建立對話上下文
+            conversation_context = ""
+            if history:
+                text_messages = []
+                for msg_data in history[-5:]:  # 最近5條有文字的訊息
+                    if msg_data.get('text_content'):
+                        text_messages.append(msg_data['text_content'])
+                
+                if text_messages:
+                    conversation_context = f"""
+最近的對話內容：
+{chr(10).join(text_messages)}
+"""
+            
+            # 如果既沒有 emoji 上下文也沒有對話上下文，使用 fallback
+            if not emoji_context and not conversation_context:
                 return random.choice(self.fallback_emojis)
             
-            # 建立 LLM 提示
-            prompt = f"""你正在參與一個 Discord 頻道的 emoji 跟風活動。最近有多條訊息都只包含 emoji，現在需要你選擇一個適合的 emoji 來回應。
+            # 建立完整的 LLM 提示
+            prompt = f"""你正在參與一個 Discord 頻道的 emoji 跟風活動。最近有多條訊息都只包含 emoji，現在需要你根據對話上下文選擇一個適合的 emoji 來回應。
+對話上下文:
+{conversation_context}
 
+請根據對話內容和氣氛選擇一個最適合的 emoji 回應。你可以使用：
+1. Discord 自定義 emoji（格式：<:emoji_name:emoji_id> 或 <a:animated_emoji:emoji_id>）
 {emoji_context}
 
-請選擇一個適合的 emoji 回應。只需要回傳 emoji 格式，不要其他文字。
-範例回應: <:thinking:123456789012345678>
+2. Unicode emoji（如：😄👍❤️😊🎉😂🔥💯等等）
+
+只需要回傳一個 emoji，不要其他文字。
+範例回應: <:thinking:123456789012345678> 或 😄
 """
             
             response = await self.llm.ainvoke(prompt)
@@ -718,9 +829,15 @@ class TrendFollowingHandler:
             self.logger.info(f"Emoji 回應: {content}")
             
             # 驗證回應是否包含有效的 emoji 格式
-            emoji_matches = self.emoji_pattern.findall(content)
-            if emoji_matches:
-                return emoji_matches[0]  # 返回第一個找到的 emoji
+            # 優先檢查 Discord 格式 emoji
+            discord_emoji_matches = self.emoji_pattern.findall(content)
+            if discord_emoji_matches:
+                return discord_emoji_matches[0]  # 返回第一個找到的 Discord emoji
+            
+            # 檢查 Unicode emoji
+            unicode_emoji_matches = self.unicode_emoji_pattern.findall(content)
+            if unicode_emoji_matches:
+                return unicode_emoji_matches[0]  # 返回第一個找到的 Unicode emoji
             
             # 如果 LLM 回應無效，使用 fallback
             return random.choice(self.fallback_emojis)

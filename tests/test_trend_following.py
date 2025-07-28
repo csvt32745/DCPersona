@@ -380,10 +380,20 @@ class TestEmojiFollowing:
     """Emoji 跟風測試"""
     
     def test_is_emoji_only_message_valid(self, handler):
-        """測試有效的純 emoji 訊息"""
+        """測試有效的純 emoji 訊息（包含 Discord 和 Unicode emoji）"""
+        # Discord emoji
         assert handler._is_emoji_only_message("<:test:123456789>") is True
         assert handler._is_emoji_only_message("<a:animated:123456789>") is True
         assert handler._is_emoji_only_message("<:test1:123> <:test2:456>") is True
+        
+        # Unicode emoji
+        assert handler._is_emoji_only_message("😄") is True
+        assert handler._is_emoji_only_message("👍") is True
+        assert handler._is_emoji_only_message("😄👍") is True
+        assert handler._is_emoji_only_message("😄 👍") is True
+        
+        # 混合格式
+        assert handler._is_emoji_only_message("<:test:123> 😄") is True
     
     def test_is_emoji_only_message_invalid(self, handler):
         """測試無效的純 emoji 訊息"""
@@ -424,8 +434,12 @@ class TestEmojiFollowing:
         """測試使用 LLM 生成 emoji 回應"""
         message = AsyncMock()
         message.guild.id = 123456789
+        message.channel = AsyncMock()
         
-        response = await handler._generate_emoji_response(message)
+        # Mock _get_recent_messages 返回空列表以簡化測試
+        handler._get_recent_messages = AsyncMock(return_value=[])
+        
+        response = await handler._generate_emoji_response(message, 999)
         
         assert response == "<:test_emoji:123456789>"
         handler.llm.ainvoke.assert_called_once()
@@ -437,19 +451,23 @@ class TestEmojiFollowing:
         handler.llm = None
         message = AsyncMock()
         
-        response = await handler._generate_emoji_response(message)
+        response = await handler._generate_emoji_response(message, 999)
         
-        assert response in ["😄", "👍", "❤️", "😊", "🎉"]
+        assert response in ["😄", "👍", "❤️", "😊", "🎉", "😂", "🔥", "💯", "👌", "😍", "🤔", "😅", "🙌", "💪", "🚀", "✨"]
     
     @pytest.mark.asyncio
     async def test_generate_emoji_response_no_emoji_context(self, handler):
         """測試沒有 emoji 上下文時的 fallback"""
         handler.emoji_registry.build_prompt_context.return_value = ""
         message = AsyncMock()
+        message.channel = AsyncMock()
         
-        response = await handler._generate_emoji_response(message)
+        # Mock _get_recent_messages 返回空列表
+        handler._get_recent_messages = AsyncMock(return_value=[])
         
-        assert response in ["😄", "👍", "❤️", "😊", "🎉"]
+        response = await handler._generate_emoji_response(message, 999)
+        
+        assert response in ["😄", "👍", "❤️", "😊", "🎉", "😂", "🔥", "💯", "👌", "😍", "🤔", "😅", "🙌", "💪", "🚀", "✨"]
     
     @pytest.mark.asyncio
     async def test_generate_emoji_response_llm_invalid_response(self, handler):
@@ -460,9 +478,29 @@ class TestEmojiFollowing:
         handler.llm.ainvoke.return_value = mock_response
         
         message = AsyncMock()
-        response = await handler._generate_emoji_response(message)
+        message.channel = AsyncMock()
+        handler._get_recent_messages = AsyncMock(return_value=[])
         
-        assert response in ["😄", "👍", "❤️", "😊", "🎉"]
+        response = await handler._generate_emoji_response(message, 999)
+        
+        assert response in ["😄", "👍", "❤️", "😊", "🎉", "😂", "🔥", "💯", "👌", "😍", "🤔", "😅", "🙌", "💪", "🚀", "✨"]
+    
+    @pytest.mark.asyncio
+    async def test_generate_emoji_response_unicode_emoji_validation(self, handler):
+        """測試 LLM 返回 Unicode emoji 時的驗證"""
+        # 模擬 LLM 返回 Unicode emoji
+        mock_response = AsyncMock()
+        mock_response.content = "😄"
+        handler.llm.ainvoke.return_value = mock_response
+        
+        message = AsyncMock()
+        message.channel = AsyncMock()
+        message.guild.id = 123456789
+        handler._get_recent_messages = AsyncMock(return_value=[])
+        
+        response = await handler._generate_emoji_response(message, 999)
+        
+        assert response == "😄"
 
 
 class TestConcurrencyAndLocking:
