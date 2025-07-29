@@ -187,7 +187,7 @@ class PromptSystem:
         # （這裡是倒數第一位，為未來的 tool result 指令預留）
         
         result = "\n\n".join(prompt_parts)
-        self.logger.debug(f"系統指令: {result}")
+        self.logger.debug(f"系統指令: {persona}")
         return result
     
     def _build_discord_context(

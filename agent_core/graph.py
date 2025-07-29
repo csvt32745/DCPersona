@@ -294,7 +294,7 @@ class UnifiedAgent(ProgressMixin):
                 )
             else:
                 # system_prompt = ""
-                system_prompt = self._build_planning_system_prompt(state.messages_global_metadata)
+                system_prompt = self._build_planning_system_prompt(state.messages_global_metadata, persona=state.current_persona)
                 messages_for_llm = self._build_messages_for_llm(
                     state.messages + [MsgNode(role="user", content="Please Generate a tool plan to gather the information or fulfill the user's request")], 
                     system_prompt
@@ -343,6 +343,7 @@ class UnifiedAgent(ProgressMixin):
                 "research_topic": user_content,
                 "metadata": state.metadata,
                 "messages": state.messages,
+                "current_persona": state.current_persona
             }
             
         except Exception as e:
@@ -682,12 +683,12 @@ class UnifiedAgent(ProgressMixin):
             self.logger.error(f"decide_next_step 失敗: {e}")
             return "finish"
 
-    def _build_planning_system_prompt(self, messages_global_metadata: str = "") -> str:
-        """構建最終答案的系統提示詞
+    def _build_planning_system_prompt(self, messages_global_metadata: str = "", persona: Optional[str] = None) -> str:
+        """構建規劃階段的系統提示詞
         
         Args:
-            context: 工具結果上下文
             messages_global_metadata: 全域訊息元數據
+            persona: 指定的 persona 名稱
             
         Returns:
             str: 完整的系統提示詞
@@ -699,17 +700,19 @@ class UnifiedAgent(ProgressMixin):
         )
         system_prompt = self.prompt_system.get_system_instructions(
             config=self.config,
-            messages_global_metadata=messages_global_metadata + "\n\n" + context_prompt
+            messages_global_metadata=messages_global_metadata + "\n\n" + context_prompt,
+            persona=persona
         )
         return system_prompt
             
 
-    def _build_final_system_prompt(self, context: str, messages_global_metadata: str) -> str:
+    def _build_final_system_prompt(self, context: str, messages_global_metadata: str, persona: Optional[str] = None) -> str:
         """構建最終答案的系統提示詞
         
         Args:
             context: 工具結果上下文
             messages_global_metadata: 全域訊息元數據
+            persona: 指定的 persona 名稱
             
         Returns:
             str: 完整的系統提示詞
@@ -718,7 +721,8 @@ class UnifiedAgent(ProgressMixin):
             # 使用 PromptSystem 構建基礎系統提示詞
             base_system_prompt = self.prompt_system.get_system_instructions(
                 config=self.config,
-                messages_global_metadata=messages_global_metadata
+                messages_global_metadata=messages_global_metadata,
+                persona=persona
             )
             
             # 添加上下文資訊（如果有的話）
@@ -834,7 +838,7 @@ class UnifiedAgent(ProgressMixin):
                 context = "本次問答沒有使用任何工具，請基於此事實跟 User 互動"
             
             # 構建系統提示詞和訊息列表
-            system_prompt = self._build_final_system_prompt(context, state.messages_global_metadata)
+            system_prompt = self._build_final_system_prompt(context, state.messages_global_metadata, persona=state.current_persona)
             messages_for_llm = self._build_messages_for_llm(messages, system_prompt)
             
             self._log_messages(messages_for_llm, "messages_for_llm (finalize_answer)")
