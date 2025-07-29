@@ -94,7 +94,7 @@ class TestEndToEndFlow:
         
         with patch('discord_bot.message_handler.load_typed_config', return_value=test_config), \
              patch('discord_bot.message_handler.collect_message') as mock_collect, \
-             patch('discord_bot.message_handler.create_unified_agent') as mock_create_agent, \
+             patch('agent_core.graph.UnifiedAgent') as mock_unified_agent, \
              patch('discord_bot.message_handler.DiscordProgressAdapter') as mock_adapter:
             
             # 設置訊息收集模擬
@@ -123,7 +123,7 @@ class TestEndToEndFlow:
                 "finished": True
             })
             mock_agent.build_graph.return_value = mock_graph
-            mock_create_agent.return_value = mock_agent
+            mock_unified_agent.return_value = mock_agent
             
             # 設置進度適配器模擬
             mock_adapter_instance = Mock()
@@ -136,6 +136,13 @@ class TestEndToEndFlow:
             
             # 執行測試
             handler = DiscordMessageHandler()
+            
+            # 模擬 discord_client 並設置 unified_agent
+            mock_discord_client = Mock()
+            mock_discord_client.unified_agent = mock_agent
+            mock_discord_client.emoji_handler = Mock()
+            handler.set_discord_client(mock_discord_client)
+            
             success = await handler.handle_message(mock_message)
             
             # 驗證結果
@@ -181,7 +188,7 @@ class TestEndToEndFlow:
         
         with patch('discord_bot.message_handler.load_typed_config', return_value=test_config), \
              patch('discord_bot.message_handler.collect_message') as mock_collect, \
-             patch('discord_bot.message_handler.create_unified_agent') as mock_create_agent, \
+             patch('agent_core.graph.UnifiedAgent') as mock_unified_agent, \
              patch('discord_bot.message_handler.DiscordProgressAdapter') as mock_adapter:
             
             # 設置多模態訊息收集模擬
@@ -218,7 +225,7 @@ class TestEndToEndFlow:
                 "finished": True
             })
             mock_agent.build_graph.return_value = mock_graph
-            mock_create_agent.return_value = mock_agent
+            mock_unified_agent.return_value = mock_agent
             
             # 設置進度適配器模擬
             mock_adapter_instance = Mock()
@@ -231,6 +238,13 @@ class TestEndToEndFlow:
             
             # 執行測試
             handler = DiscordMessageHandler()
+            
+            # 模擬 discord_client 並設置 unified_agent
+            mock_discord_client = Mock()
+            mock_discord_client.unified_agent = mock_agent
+            mock_discord_client.emoji_handler = Mock()
+            handler.set_discord_client(mock_discord_client)
+            
             success = await handler.handle_message(mock_message)
             
             # 驗證結果

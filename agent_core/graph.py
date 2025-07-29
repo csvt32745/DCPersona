@@ -299,7 +299,7 @@ class UnifiedAgent(ProgressMixin):
                     state.messages + [MsgNode(role="user", content="Please Generate a tool plan to gather the information or fulfill the user's request")], 
                     system_prompt
                 )
-                self._log_messages(messages_for_llm, "messages_for_llm (planning)")
+                # self._log_messages(messages_for_llm, "messages_for_llm (planning)")
                 ai_message = await self.tool_analysis_llm.ainvoke(messages_for_llm)
                 logging.debug(ai_message.content)
                 

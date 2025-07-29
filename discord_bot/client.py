@@ -26,6 +26,7 @@ from output_media.emoji_registry import EmojiRegistry
 from langchain_google_genai import ChatGoogleGenerativeAI
 from discord_bot.commands import register_commands
 from discord_bot.trend_following import TrendFollowingHandler
+from agent_core.graph import UnifiedAgent
 
 class DCPersonaBot(commands.Bot):
     """自定義 Bot 類，支援 Slash Commands"""
@@ -48,6 +49,9 @@ class DCPersonaBot(commands.Bot):
         
         self.config = config
         self.event_scheduler = event_scheduler
+        
+        # Agent 實例（將在 on_ready 時初始化）
+        self.unified_agent = None
         self.logger = logging.getLogger(__name__)
         
         # 初始化服務
@@ -167,7 +171,14 @@ class DCPersonaBot(commands.Bot):
                 self.logger.info("ℹ️ 跟風功能已停用")
         except Exception as e:
             self.logger.error(f"❌ 初始化跟風功能失敗: {e}")
-            self.trend_following_handler = None
+        
+        # 初始化統一 Agent 實例
+        try:
+            self.unified_agent = UnifiedAgent(self.config)
+            self.logger.info("✅ UnifiedAgent 已初始化並快取")
+        except Exception as e:
+            self.logger.error(f"❌ 初始化 UnifiedAgent 失敗: {e}")
+            self.unified_agent = None
         
         # 記錄配置資訊
         if self.config and self.config.agent:

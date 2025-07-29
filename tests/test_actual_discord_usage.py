@@ -74,7 +74,7 @@ async def test_actual_message_processing_flow():
     # 使用真實的訊息處理器（但模擬依賴）
     with patch('discord_bot.message_handler.load_typed_config', return_value=test_config), \
          patch('discord_bot.message_handler.collect_message') as mock_collect, \
-         patch('discord_bot.message_handler.create_unified_agent') as mock_create_agent, \
+         patch('agent_core.graph.UnifiedAgent') as mock_unified_agent, \
          patch('discord_bot.message_handler.DiscordProgressAdapter') as mock_adapter:
         
         from discord_bot.message_handler import DiscordMessageHandler
@@ -106,7 +106,7 @@ async def test_actual_message_processing_flow():
             "finished": True
         })
         mock_agent.build_graph.return_value = mock_graph
-        mock_create_agent.return_value = mock_agent
+        mock_unified_agent.return_value = mock_agent
         
         # 設置進度適配器模擬
         mock_adapter_instance = Mock()
@@ -119,13 +119,19 @@ async def test_actual_message_processing_flow():
         
         # 執行測試
         handler = DiscordMessageHandler()
+        
+        # 模擬 discord_client 並設置 unified_agent
+        mock_discord_client = Mock()
+        mock_discord_client.unified_agent = mock_agent
+        mock_discord_client.emoji_handler = Mock()
+        handler.set_discord_client(mock_discord_client)
+        
         success = await handler.handle_message(mock_message)
         
         # 驗證結果
         assert success is True
         mock_collect.assert_called_once()
-        # Agent 可能被調用多次（例如在初始化和處理時），這是正常的
-        assert mock_create_agent.call_count >= 1
+        # 驗證 Agent 被正確使用
         mock_agent.add_progress_observer.assert_called_once()
         mock_agent.build_graph.assert_called_once()
         mock_graph.ainvoke.assert_called_once()

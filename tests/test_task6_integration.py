@@ -65,9 +65,9 @@ def mock_config():
 def message_handler(mock_config, event_scheduler):
     """創建測試用的 DiscordMessageHandler"""
     # 使用 patch 來避免創建真實的 Agent
-    with patch('discord_bot.message_handler.create_unified_agent') as mock_create_agent:
+    with patch('agent_core.graph.UnifiedAgent') as mock_unified_agent:
         mock_agent = Mock()
-        mock_create_agent.return_value = mock_agent
+        mock_unified_agent.return_value = mock_agent
         
         handler = DiscordMessageHandler(mock_config, event_scheduler)
         
@@ -78,6 +78,8 @@ def message_handler(mock_config, event_scheduler):
         mock_client.user.name = "TestBot"
         mock_client.user.display_name = "TestBot"
         mock_client._connection = Mock()
+        mock_client.unified_agent = mock_agent  # 添加 unified_agent
+        mock_client.emoji_handler = Mock()  # 添加 emoji_handler
         
         handler.set_discord_client(mock_client)
         return handler
@@ -88,9 +90,9 @@ class TestTask6Integration:
     
     def test_message_handler_initialization(self, mock_config, event_scheduler):
         """測試 DiscordMessageHandler 初始化"""
-        with patch('discord_bot.message_handler.create_unified_agent') as mock_create_agent:
+        with patch('agent_core.graph.UnifiedAgent') as mock_unified_agent:
             mock_agent = Mock()
-            mock_create_agent.return_value = mock_agent
+            mock_unified_agent.return_value = mock_agent
             
             handler = DiscordMessageHandler(mock_config, event_scheduler)
             
@@ -99,9 +101,9 @@ class TestTask6Integration:
         
     def test_event_scheduler_callback_registration(self, event_scheduler):
         """測試 EventScheduler 回調函數註冊"""
-        with patch('discord_bot.message_handler.create_unified_agent') as mock_create_agent:
+        with patch('agent_core.graph.UnifiedAgent') as mock_unified_agent:
             mock_agent = Mock()
-            mock_create_agent.return_value = mock_agent
+            mock_unified_agent.return_value = mock_agent
             
             handler = DiscordMessageHandler(event_scheduler=event_scheduler)
             

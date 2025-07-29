@@ -7,14 +7,17 @@ Discord 訊息處理器
 
 import logging
 import asyncio
-from typing import Dict, Any, Optional, List
+from typing import Dict, Any, Optional, List, TYPE_CHECKING
 import discord
+
+if TYPE_CHECKING:
+    from discord_bot.client import DCPersonaBot
 import httpx
 import uuid
 from datetime import datetime
 from dataclasses import asdict
 
-from agent_core.graph import create_unified_agent
+# Agent 實例現在由 DCPersonaBot 管理
 from agent_core.progress_observer import ProgressEvent
 from agent_core.progress_types import ProgressStage
 from schemas.agent_types import OverallState, MsgNode, ReminderDetails, ToolExecutionResult
@@ -56,7 +59,7 @@ class DiscordMessageHandler:
 
         # 儲存 EventScheduler 實例
         self.event_scheduler = event_scheduler
-        self.discord_client = None  # 將在 on_ready 事件中設定
+        self.discord_client: Optional['DCPersonaBot'] = None  # 將在 on_ready 事件中設定
         
         # 提醒觸發資訊儲存（避免直接修改 Discord Message 物件）
         self.reminder_triggers: Dict[str, Dict[str, Any]] = {}
@@ -71,10 +74,9 @@ class DiscordMessageHandler:
         else:
             self.logger.warning("EventScheduler 未傳入 DiscordMessageHandler，提醒功能可能無法正常運作。")
 
-        logging.info(f"Agent 測試初始化")
-        self.agent = create_unified_agent(self.config)
+        logging.info(f"MessageHandler 初始化完成")
     
-    def set_discord_client(self, discord_client):
+    def set_discord_client(self, discord_client: 'DCPersonaBot'):
         """設定 Discord 客戶端實例"""
         self.discord_client = discord_client
         self.logger.info("Discord 客戶端已設定")
@@ -152,9 +154,16 @@ class DiscordMessageHandler:
         Returns:
             bool: 是否成功處理
         """
+        # 明確初始化變數，避免使用 locals() 檢查
+        agent = None
+        progress_adapter_to_cleanup = None
+        
         try:
-            # 創建 Agent 實例
-            agent = create_unified_agent(self.config)
+            # 使用 Bot 的共享 Agent 實例
+            agent = self.discord_client.unified_agent
+            if agent is None:
+                self.logger.error("Bot 的 unified_agent 未初始化，無法處理對話")
+                return False
             
             # 使用傳入的 progress_adapter 或創建新的
             if progress_adapter is None:
@@ -163,6 +172,10 @@ class DiscordMessageHandler:
                     emoji_handler = self.discord_client.emoji_handler
                 progress_adapter = DiscordProgressAdapter(original_message, emoji_handler)
             
+            # 記錄需要清理的 progress_adapter
+            progress_adapter_to_cleanup = progress_adapter
+            
+            # 添加進度觀察者
             agent.add_progress_observer(progress_adapter)
             
             # 準備初始狀態
@@ -187,14 +200,22 @@ class DiscordMessageHandler:
             self.logger.error(f"統一 Agent 處理失敗: {e}", exc_info=True)
             
             # 通知進度適配器錯誤
-            if 'progress_adapter' in locals():
-                await progress_adapter.on_error(e)
+            if progress_adapter_to_cleanup:
+                await progress_adapter_to_cleanup.on_error(e)
             
             return False
+            
         finally:
+            if agent and progress_adapter_to_cleanup:
+                try:
+                    agent.remove_progress_observer(progress_adapter_to_cleanup)
+                    self.logger.debug("已從 Agent 中移除進度觀察者")
+                except Exception as remove_error:
+                    self.logger.warning(f"移除進度觀察者失敗: {remove_error}")
+            
             # 清理進度適配器
-            if 'progress_adapter' in locals():
-                await progress_adapter.cleanup()
+            if progress_adapter_to_cleanup:
+                await progress_adapter_to_cleanup.cleanup()
             
             # 清理該訊息的進度管理記錄，防止記憶體洩漏
             try:
