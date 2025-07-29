@@ -50,8 +50,7 @@ class DCPersonaBot(commands.Bot):
         self.config = config
         self.event_scheduler = event_scheduler
         
-        # Agent 實例（將在 on_ready 時初始化）
-        self.unified_agent = None
+        # Agent 實例現在改為每個訊息處理時動態創建，不再共享
         self.logger = logging.getLogger(__name__)
         
         # 初始化服務
@@ -172,13 +171,7 @@ class DCPersonaBot(commands.Bot):
         except Exception as e:
             self.logger.error(f"❌ 初始化跟風功能失敗: {e}")
         
-        # 初始化統一 Agent 實例
-        try:
-            self.unified_agent = UnifiedAgent(self.config)
-            self.logger.info("✅ UnifiedAgent 已初始化並快取")
-        except Exception as e:
-            self.logger.error(f"❌ 初始化 UnifiedAgent 失敗: {e}")
-            self.unified_agent = None
+        # UnifiedAgent 現在改為每個訊息處理時動態創建，不再預先初始化
         
         # 記錄配置資訊
         if self.config and self.config.agent:

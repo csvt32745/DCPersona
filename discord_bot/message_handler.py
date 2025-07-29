@@ -159,11 +159,9 @@ class DiscordMessageHandler:
         progress_adapter_to_cleanup = None
         
         try:
-            # 使用 Bot 的共享 Agent 實例
-            agent = self.discord_client.unified_agent
-            if agent is None:
-                self.logger.error("Bot 的 unified_agent 未初始化，無法處理對話")
-                return False
+            # 為每個訊息創建新的 Agent 實例
+            from agent_core.graph import UnifiedAgent
+            agent = UnifiedAgent(self.config)
             
             # 使用傳入的 progress_adapter 或創建新的
             if progress_adapter is None:
@@ -206,13 +204,6 @@ class DiscordMessageHandler:
             return False
             
         finally:
-            if agent and progress_adapter_to_cleanup:
-                try:
-                    agent.remove_progress_observer(progress_adapter_to_cleanup)
-                    self.logger.debug("已從 Agent 中移除進度觀察者")
-                except Exception as remove_error:
-                    self.logger.warning(f"移除進度觀察者失敗: {remove_error}")
-            
             # 清理進度適配器
             if progress_adapter_to_cleanup:
                 await progress_adapter_to_cleanup.cleanup()
@@ -223,6 +214,8 @@ class DiscordMessageHandler:
                 progress_manager.cleanup_by_message_id(original_message.id)
             except Exception as cleanup_error:
                 self.logger.warning(f"清理進度管理記錄時發生錯誤: {cleanup_error}")
+            
+            # agent 實例會自動被垃圾收集，不需要特殊清理
     
     async def cleanup(self):
         """清理資源，例如關閉 httpx 客戶端"""
