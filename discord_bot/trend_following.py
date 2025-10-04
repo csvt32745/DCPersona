@@ -401,7 +401,7 @@ class TrendFollowingHandler:
                 return False
             
             # 獲取訊息歷史（包含機器人訊息用於分析）
-            history = await self._get_recent_messages(message.channel, bot.user.id)
+            history = await self._get_recent_messages(message.channel, bot.user.id, exclude_message=message)
             if len(history) < 1:  # 至少需要 1 條歷史訊息才能判斷
                 return False
             
@@ -507,23 +507,40 @@ class TrendFollowingHandler:
             self.logger.error(f"處理訊息文字時出錯: {e}")
             return None
 
-    async def _get_recent_messages(self, channel: discord.TextChannel, bot_user_id: int, include_text_content: bool = False) -> List[dict]:
+    async def _get_recent_messages(
+        self,
+        channel: discord.TextChannel,
+        bot_user_id: int,
+        include_text_content: bool = False,
+        exclude_message: Optional[discord.Message] = None
+    ) -> List[dict]:
         """獲取最近的訊息內容和元數據
-        
+
         Args:
             channel: Discord 頻道
             bot_user_id: 機器人的用戶 ID
             include_text_content: 是否包含處理後的文字內容用於上下文
-            
+            exclude_message: 要排除的訊息（通常是觸發事件的當前訊息）
+
         Returns:
             List[dict]: 最近的訊息列表，包含內容、sticker 和是否為機器人訊息的資訊
         """
         try:
             messages = []
-            async for msg in channel.history(limit=self.config.message_history_limit + 1):
+
+            # 使用 before 參數確保只獲取指定訊息之前的歷史
+            kwargs = {'limit': self.config.message_history_limit}
+            if exclude_message:
+                kwargs['before'] = exclude_message
+
+            async for msg in channel.history(**kwargs):
+                # 雙重保險：明確檢查並排除指定訊息
+                if exclude_message and msg.id == exclude_message.id:
+                    continue
+
                 # 獲取訊息的實際內容（文字或 sticker）
                 content_type, content_value = self._get_message_content(msg)
-                
+
                 if content_type:  # 只要有內容（文字或 sticker）就保留
                     message_data = {
                         'content_type': content_type,
@@ -531,17 +548,17 @@ class TrendFollowingHandler:
                         'is_bot': msg.author.bot or msg.author.id == bot_user_id,
                         'author_id': msg.author.id
                     }
-                    
+
                     # 如果需要文字上下文，額外處理文字內容
                     if include_text_content:
                         text_content = self._process_message_text_for_context(msg, bot_user_id)
                         message_data['text_content'] = text_content
-                    
+
                     messages.append(message_data)
-            
-            # 移除第一條（當前訊息）並反轉順序（最舊的在前）
-            return messages[1:][::-1] if len(messages) > 1 else []
-            
+
+            # 反轉順序（最舊的在前）
+            return messages[::-1]
+
         except Exception as e:
             self.logger.error(f"獲取訊息歷史失敗: {e}")
             return []
@@ -788,8 +805,8 @@ class TrendFollowingHandler:
             # 建立 emoji 上下文
             guild_id = message.guild.id if message.guild else None
             emoji_context = self.emoji_registry.build_prompt_context(guild_id)
-            
-            history = await self._get_recent_messages(message.channel, bot_user_id, include_text_content=True)
+
+            history = await self._get_recent_messages(message.channel, bot_user_id, include_text_content=True, exclude_message=message)
             
             # 建立對話上下文
             conversation_context = ""

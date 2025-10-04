@@ -19,7 +19,7 @@ from typing import List, Dict, Any
 import discord
 from langchain_google_genai import ChatGoogleGenerativeAI
 
-from discord_bot.trend_following import TrendFollowingHandler
+from discord_bot.trend_following import TrendFollowingHandler, TrendActivityType
 from schemas.config_types import TrendFollowingConfig
 from output_media.emoji_registry import EmojiRegistry
 
@@ -437,7 +437,9 @@ class TestEmojiFollowing:
         message.channel = AsyncMock()
         
         # Mock _get_recent_messages 返回空列表以簡化測試
-        handler._get_recent_messages = AsyncMock(return_value=[])
+        async def mock_get_recent_messages(channel, bot_user_id, include_text_content=False, exclude_message=None):
+            return []
+        handler._get_recent_messages = mock_get_recent_messages
         
         response = await handler._generate_emoji_response(message, 999)
         
@@ -463,7 +465,9 @@ class TestEmojiFollowing:
         message.channel = AsyncMock()
         
         # Mock _get_recent_messages 返回空列表
-        handler._get_recent_messages = AsyncMock(return_value=[])
+        async def mock_get_recent_messages(channel, bot_user_id, include_text_content=False, exclude_message=None):
+            return []
+        handler._get_recent_messages = mock_get_recent_messages
         
         response = await handler._generate_emoji_response(message, 999)
         
@@ -479,7 +483,9 @@ class TestEmojiFollowing:
         
         message = AsyncMock()
         message.channel = AsyncMock()
-        handler._get_recent_messages = AsyncMock(return_value=[])
+        async def mock_get_recent_messages(channel, bot_user_id, include_text_content=False, exclude_message=None):
+            return []
+        handler._get_recent_messages = mock_get_recent_messages
         
         response = await handler._generate_emoji_response(message, 999)
         
@@ -496,7 +502,9 @@ class TestEmojiFollowing:
         message = AsyncMock()
         message.channel = AsyncMock()
         message.guild.id = 123456789
-        handler._get_recent_messages = AsyncMock(return_value=[])
+        async def mock_get_recent_messages(channel, bot_user_id, include_text_content=False, exclude_message=None):
+            return []
+        handler._get_recent_messages = mock_get_recent_messages
         
         response = await handler._generate_emoji_response(message, 999)
         
@@ -588,7 +596,7 @@ class TestBotLoopPrevention:
         bot = AsyncMock()
         bot.user.id = 999999999
         
-        with patch.object(handler, '_get_recent_messages', return_value=history):
+        with patch.object(handler, '_get_recent_messages', new=AsyncMock(return_value=history)):
             result = await handler._check_content_following(message, history, 999999999)
             
             assert result is None  # 新的 API 返回 None 而非 False
@@ -612,7 +620,7 @@ class TestBotLoopPrevention:
         bot = AsyncMock()
         bot.user.id = 999999999
         
-        with patch.object(handler, '_get_recent_messages', return_value=history):
+        with patch.object(handler, '_get_recent_messages', new=AsyncMock(return_value=history)):
             result = await handler._check_emoji_following(message, history, 999999999)
             
             assert result is None  # 新的 API 返回 None 而非 False
@@ -698,7 +706,7 @@ class TestIntegrationScenarios:
             {'content_type': 'text', 'content_value': 'Hello World', 'is_bot': False},
         ]
         
-        with patch.object(handler, '_get_recent_messages', return_value=history):
+        with patch.object(handler, '_get_recent_messages', new=AsyncMock(return_value=history)):
             # 由於機率性跟風，需要確保這次測試會成功
             with patch.object(handler, 'should_follow_probabilistically', return_value=True):
                 result = await handler.handle_message_following(message, bot)
@@ -730,7 +738,7 @@ class TestIntegrationScenarios:
             {'content_type': 'text', 'content_value': '<:emoji2:456>', 'is_bot': False},
         ]
         
-        with patch.object(handler, '_get_recent_messages', return_value=history):
+        with patch.object(handler, '_get_recent_messages', new=AsyncMock(return_value=history)):
             # 由於機率性跟風，需要確保這次測試會成功
             # 設定隨機種子或直接 patch 機率決策
             with patch.object(handler, 'should_follow_probabilistically', return_value=True):
@@ -1032,7 +1040,7 @@ class TestDelayedSending:
         
         # 測試延遲執行
         start_time = time.time()
-        with patch.object(handler, '_get_recent_messages', return_value=history):
+        with patch.object(handler, '_get_recent_messages', new=AsyncMock(return_value=history)):
             # 由於機率性跟風，需要確保這次測試會成功
             with patch.object(handler, 'should_follow_probabilistically', return_value=True):
                 result = await handler.handle_message_following(mock_message, mock_bot)
@@ -1251,18 +1259,112 @@ class TestDuplicatePrevention:
         
         # 併發執行 reaction 和 message 跟風
         with patch.object(handler, 'should_follow_probabilistically', return_value=True):
-            with patch.object(handler, '_get_recent_messages', return_value=history):
+            with patch.object(handler, '_get_recent_messages', new=AsyncMock(return_value=history)):
                 tasks = [
                     asyncio.create_task(handler.handle_raw_reaction_following(payload, mock_bot)),
                     asyncio.create_task(handler.handle_message_following(mock_message, mock_bot))
                 ]
-                
+
                 results = await asyncio.gather(*tasks)
         
         # 兩者都應該成功（因為它們是分離的）
         assert all(result is True for result in results)
         mock_message_for_reaction.add_reaction.assert_called_once()
         mock_channel_for_message.send.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_get_recent_messages_race_condition(self, handler):
+        """測試 _get_recent_messages 競態條件修復
+
+        驗證當在 channel.history() 執行期間有新訊息發送時，
+        exclude_message 參數能正確排除觸發訊息，避免重複計算
+        """
+        # 模擬頻道和訊息
+        mock_channel = AsyncMock()
+        trigger_message = AsyncMock()
+        trigger_message.id = 999  # 觸發訊息 ID
+        trigger_message.content = "trigger"
+        trigger_message.stickers = []
+        trigger_message.author.bot = False
+        trigger_message.author.id = 111
+
+        new_message = AsyncMock()
+        new_message.id = 1000  # 在 history 執行前發送的新訊息
+        new_message.content = "new message"
+        new_message.stickers = []
+        new_message.author.bot = False
+        new_message.author.id = 222
+
+        history_message = AsyncMock()
+        history_message.id = 998  # 歷史訊息
+        history_message.content = "history"
+        history_message.author.bot = False
+        history_message.author.id = 333
+        history_message.stickers = []  # 沒有 sticker
+
+        # 模擬 channel.history() 返回：包含觸發訊息（應被排除）
+        async def mock_history(**kwargs):
+            # 驗證 before 參數被正確使用
+            assert 'before' in kwargs
+            assert kwargs['before'] == trigger_message
+
+            # 模擬返回觸發訊息之前的歷史
+            # 實際上 Discord API 不會返回 trigger_message，但我們測試雙重保險
+            for msg in [trigger_message, history_message]:
+                yield msg
+
+        mock_channel.history = mock_history
+
+        # 執行測試
+        result = await handler._get_recent_messages(
+            mock_channel,
+            bot_user_id=999,
+            exclude_message=trigger_message
+        )
+
+        # 驗證結果：應該只包含 history_message，trigger_message 被排除
+        assert len(result) == 1
+        assert result[0]['content_value'] == "history"
+        assert result[0]['author_id'] == 333
+
+    @pytest.mark.asyncio
+    async def test_total_count_excludes_trigger_message(self, handler):
+        """測試 total_count 計算不會重複計算觸發訊息
+
+        驗證在內容跟風和 emoji 跟風中，total_count 的計算
+        正確排除了觸發訊息，避免重複計算
+        """
+        # 設置測試訊息
+        trigger_message = AsyncMock()
+        trigger_message.id = 999
+        trigger_message.content = "重複內容"
+        trigger_message.stickers = []  # 沒有 sticker
+        trigger_message.author.bot = False
+        trigger_message.author.id = 111
+        trigger_message.channel = AsyncMock()
+        trigger_message.channel.id = 123456789
+
+        # 模擬歷史：2 條相同內容（不含觸發訊息）
+        history = [
+            {'content_type': 'text', 'content_value': '重複內容', 'is_bot': False, 'author_id': 222},
+            {'content_type': 'text', 'content_value': '重複內容', 'is_bot': False, 'author_id': 333},
+        ]
+
+        # 測試內容跟風的 total_count 計算
+        # history 有 2 條，加上當前訊息 = 3 條
+        # 使用機率性決策 mock 確保測試穩定
+        with patch.object(handler, 'should_follow_probabilistically', return_value=True):
+            result = await handler._check_content_following(trigger_message, history, 999)
+
+            # 驗證閾值檢查使用正確的 total_count (應為 3)
+            # should_follow_probabilistically 應該被調用，且 count 參數為 3
+            handler.should_follow_probabilistically.assert_called_once()
+            call_args = handler.should_follow_probabilistically.call_args
+            assert call_args[0][0] == 3  # total_count = 3 (2 from history + 1 current)
+
+            # 應該返回跟風決策
+            assert result is not None
+            assert result[0] == TrendActivityType.CONTENT
 
 
 if __name__ == "__main__":
